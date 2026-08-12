@@ -17,6 +17,7 @@ use axum::{Json, Router};
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
+use crate::archive::MatchArchive;
 use crate::metrics::{MetricsSnapshot, PipelineMetrics};
 
 /// Shared state for status handlers.
@@ -27,6 +28,7 @@ pub struct StatusState {
     egress: String,
     novelty_db: Option<PathBuf>,
     novelty_alerts: Option<PathBuf>,
+    archive: Option<Arc<MatchArchive>>,
     rate: Arc<Mutex<RateSample>>,
 }
 
@@ -51,12 +53,19 @@ impl StatusState {
             egress: egress.into(),
             novelty_db,
             novelty_alerts,
+            archive: None,
             rate: Arc::new(Mutex::new(RateSample {
                 at: Instant::now(),
                 frames_seen: snap.frames_seen,
                 matches_enqueued: snap.matches_enqueued,
             })),
         }
+    }
+
+    #[must_use]
+    pub fn with_archive(mut self, archive: Arc<MatchArchive>) -> Self {
+        self.archive = Some(archive);
+        self
     }
 }
 
@@ -88,6 +97,13 @@ pub struct StatusResponse {
     pub novelty_alerts_per_hour: f64,
     pub alerts_file_bytes: Option<u64>,
     pub alerts_file_lines: Option<u64>,
+    pub archive_events_written: u64,
+    pub archive_bytes_written: u64,
+    pub archive_dir: Option<String>,
+    pub archive_dir_bytes: Option<u64>,
+    pub archive_disk_warn: bool,
+    pub config_hash: Option<String>,
+    pub snapshot_id: Option<String>,
     /// Operator hint: rising `channel_full` means the filter is falling behind.
     pub keep_up: KeepUpHint,
     /// Product funnel hint (quiet A′ file is often healthy).
@@ -188,6 +204,24 @@ fn build_status(state: &StatusState) -> StatusResponse {
         .as_ref()
         .map(|p| alerts_file_stats(p))
         .unwrap_or((None, None));
+
+    let (archive_dir, archive_dir_bytes, archive_disk_warn, config_hash, snapshot_id) =
+        match &state.archive {
+            Some(arch) => {
+                let bytes = arch.total_bytes_on_disk();
+                let warn = bytes >= arch.disk_warn_bytes();
+                let prov = arch.provenance().load();
+                (
+                    Some(arch.dir().display().to_string()),
+                    Some(bytes),
+                    warn,
+                    Some(prov.config_hash.clone()),
+                    Some(prov.snapshot_id.clone()),
+                )
+            }
+            None => (None, None, false, None, None),
+        };
+
     StatusResponse {
         ok: true,
         uptime_secs,
@@ -217,6 +251,13 @@ fn build_status(state: &StatusState) -> StatusResponse {
         novelty_alerts_per_hour,
         alerts_file_bytes,
         alerts_file_lines,
+        archive_events_written: snap.archive_events_written,
+        archive_bytes_written: snap.archive_bytes_written,
+        archive_dir,
+        archive_dir_bytes,
+        archive_disk_warn,
+        config_hash,
+        snapshot_id,
         keep_up: keep_up_hint(&snap, frames_per_sec),
         product: product_hint(&snap, uptime_secs, &state.egress),
     }

@@ -25,6 +25,9 @@ pub struct PipelineMetrics {
     pub novelty_fully_ignored: AtomicU64,
     /// First-seen coalition keys inserted into `novelty.db` this process.
     pub novelty_coalitions_inserted: AtomicU64,
+    /// Research archive lines written this process.
+    pub archive_events_written: AtomicU64,
+    pub archive_bytes_written: AtomicU64,
 }
 
 impl PipelineMetrics {
@@ -76,6 +79,8 @@ impl PipelineMetrics {
             novelty_mega_san_dropped: self.novelty_mega_san_dropped.load(Ordering::Relaxed),
             novelty_fully_ignored: self.novelty_fully_ignored.load(Ordering::Relaxed),
             novelty_coalitions_inserted: self.novelty_coalitions_inserted.load(Ordering::Relaxed),
+            archive_events_written: self.archive_events_written.load(Ordering::Relaxed),
+            archive_bytes_written: self.archive_bytes_written.load(Ordering::Relaxed),
         }
     }
 }
@@ -97,6 +102,8 @@ pub struct MetricsSnapshot {
     pub novelty_mega_san_dropped: u64,
     pub novelty_fully_ignored: u64,
     pub novelty_coalitions_inserted: u64,
+    pub archive_events_written: u64,
+    pub archive_bytes_written: u64,
 }
 
 /// Emit a progress line on an interval until cancelled.
@@ -126,6 +133,8 @@ pub async fn run_progress_logger(
                     novelty_oversized_dropped = s.novelty_oversized_dropped,
                     novelty_mega_san_dropped = s.novelty_mega_san_dropped,
                     novelty_coalitions_inserted = s.novelty_coalitions_inserted,
+                    archive_events_written = s.archive_events_written,
+                    archive_bytes_written = s.archive_bytes_written,
                     "pipeline progress"
                 );
             }

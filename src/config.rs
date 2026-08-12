@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use crate::archive::ArchiveConfig;
 use crate::batch::BATCH_MAX_MESSAGES;
 use crate::error::{ConfigError, StartupError};
 use crate::novelty_sink::{default_novelty_alerts, default_novelty_db};
@@ -71,6 +72,8 @@ pub struct Config {
     /// HTTP status bind (`/healthz`, `/status`). `None` disables the server.
     /// Default `0.0.0.0:9100`; set `STATUS_BIND=` empty / `off` to disable.
     pub status_bind: Option<String>,
+    /// Research MatchEvent archive (`ARCHIVE_DIR`). `None` disables.
+    pub archive: Option<ArchiveConfig>,
 }
 
 impl Config {
@@ -112,6 +115,7 @@ impl Config {
         let reconnect_max_ms = parse_u64_env("RECONNECT_MAX_DELAY_MS", DEFAULT_RECONNECT_MAX_MS)?;
         let progress_secs = parse_u64_env("PROGRESS_INTERVAL_SECS", DEFAULT_PROGRESS_SECS)?;
         let status_bind = parse_status_bind();
+        let archive = ArchiveConfig::from_env_optional(egress.is_prod());
 
         let watchlist_min_len = match env::var("WATCHLIST_MIN_LEN") {
             Ok(raw) => raw.parse().map_err(|e| ConfigError::InvalidValue {
@@ -161,6 +165,7 @@ impl Config {
             progress_interval: Duration::from_secs(progress_secs),
             watchlist_min_len,
             status_bind,
+            archive,
         };
         cfg.validate()?;
         Ok(cfg)
@@ -287,6 +292,7 @@ mod tests {
             progress_interval: Duration::from_secs(30),
             watchlist_min_len: 0,
             status_bind: Some(DEFAULT_STATUS_BIND.into()),
+            archive: None,
         }
     }
 

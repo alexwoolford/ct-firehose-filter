@@ -29,6 +29,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 flate2 = "1"
+sha2 = "0.10"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

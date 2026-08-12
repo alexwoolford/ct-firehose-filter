@@ -98,6 +98,7 @@ Prod overlay sets `EGRESS=novelty`, `RUST_LOG=warn`, `WATCHLIST_MIN_LEN=100000`,
 Docker log rotation (`10m` × 3), and alert chunk/budget caps (256 MiB chunks, 20 GiB total, gzip).
 Output: `/var/lib/ct-firehose-filter/alerts.jsonl` (+ rotated `.gz` siblings after **256 MiB**) and `novelty.db`.
 Warm A′ is typically **tens of alerts/hour** — overnight tens of KB is expected, not a stall.
+Research archive (default under novelty): `/var/lib/ct-firehose-filter/archive/matches.jsonl` — every enqueued match + full SANs + config snapshots ([`docs/ARCHIVE.md`](docs/ARCHIVE.md)).
 Keep-up + novelty funnel: `curl -s http://127.0.0.1:9100/status | jq` (loopback only — see [`CERTSTREAM.md`](docs/CERTSTREAM.md#keep-up-visibility-are-we-behind-certstream)).
 Full checklist: [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md#quiet-production-checklist).
 
@@ -130,6 +131,8 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `docs/SCALE.md` | 752k watchlist RSS / throughput measurements |
 | `docs/CERTSTREAM.md` | sidecar + compose + egress runbook |
 | `docs/SIGNAL.md` | 15m tip eval + SNR / novelty alert semantics |
+| `docs/ARCHIVE.md` | research MatchEvent archive for multi-year replay |
+| `src/archive.rs` | append-only matches.jsonl + config snapshots |
 | `src/novelty.rs` | SQLite first-seen coalitions / hosts |
 | `src/novelty_alert.rs` | shared A′/B′ processing |
 | `src/novelty_sink.rs` | in-process A′ egress (`EGRESS=novelty`) |

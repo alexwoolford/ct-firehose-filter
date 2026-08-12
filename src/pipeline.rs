@@ -5,6 +5,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::archive::MatchArchive;
 use crate::batch::{BatchConfig, Batcher};
 use crate::egress::EgressSink;
 use crate::error::PipelineError;
@@ -128,6 +129,34 @@ pub async fn run_pipeline_with_metrics<S>(
 where
     S: EgressSink + 'static,
 {
+    run_pipeline_with_archive(
+        certstream_url,
+        watchlist,
+        sink,
+        config,
+        shutdown,
+        metrics,
+        progress_interval,
+        None,
+    )
+    .await
+}
+
+/// Pipeline with optional research archive (every enqueued match + full SAN list).
+#[allow(clippy::too_many_arguments)]
+pub async fn run_pipeline_with_archive<S>(
+    certstream_url: String,
+    watchlist: Arc<HotWatchlist>,
+    sink: S,
+    config: PipelineConfig,
+    shutdown: CancellationToken,
+    metrics: Arc<PipelineMetrics>,
+    progress_interval: Duration,
+    archive: Option<Arc<MatchArchive>>,
+) -> Result<(), PipelineError>
+where
+    S: EgressSink + 'static,
+{
     let (frame_tx, mut frame_rx) = mpsc::channel::<Vec<u8>>(config.channel_capacity);
     let (match_tx, match_rx) = mpsc::channel::<MatchEvent>(config.channel_capacity);
 
@@ -185,6 +214,16 @@ where
                                 metrics.matches_suppressed.fetch_add(1, Ordering::Relaxed);
                             }
                             if let Some(event) = outcome.event {
+                                if let Some(arch) = &archive {
+                                    if let Err(err) =
+                                        arch.record_enqueued(&event, &leaf.domains)
+                                    {
+                                        tracing::warn!(
+                                            error = %err,
+                                            "match archive write failed"
+                                        );
+                                    }
+                                }
                                 match match_tx.try_send(event) {
                                     Ok(()) => {
                                         metrics.matches_enqueued.fetch_add(1, Ordering::Relaxed);
@@ -219,6 +258,10 @@ where
             }
         }
         // Dropping match_tx closes the channel so the batcher flushes then exits.
+    }
+
+    if let Some(arch) = &archive {
+        let _ = arch.flush();
     }
 
     shutdown.cancel();

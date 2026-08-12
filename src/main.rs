@@ -1,10 +1,11 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwap;
 use ct_firehose_filter::{
-    load_domain_file, load_suppress_and_glue, run_pipeline_with_metrics, serve_status, Config,
-    DomainWatchlist, EgressBackend, HotWatchlist, NoveltyPolicy, NoveltySink, PipelineMetrics,
-    StartupError, StatusState, StdoutSink,
+    load_domain_file, load_suppress_and_glue, run_pipeline_with_archive, serve_status,
+    write_config_snapshot, Config, DomainWatchlist, EgressBackend, HotWatchlist, MatchArchive,
+    NoveltyPolicy, NoveltySink, PipelineMetrics, StartupError, StatusState, StdoutSink,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -75,11 +76,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let watchlist = Arc::new(HotWatchlist::new(watchlist));
 
+    let metrics = PipelineMetrics::new();
+
+    let archive = if let Some(arch_cfg) = config.archive.clone() {
+        let prov = write_config_snapshot(
+            &arch_cfg.dir,
+            &config.watchlist_file,
+            &config.suppress_file,
+            &config.glue_file,
+        )
+        .map_err(|e| format!("archive config snapshot failed: {e}"))?;
+        let provenance = Arc::new(ArcSwap::from_pointee(prov));
+        let arch = MatchArchive::open(
+            arch_cfg,
+            Arc::clone(&provenance),
+            Some(Arc::clone(&metrics)),
+        )
+        .map_err(|e| format!("ARCHIVE_DIR open failed: {e}"))?;
+        tracing::warn!(
+            dir = %arch.dir().display(),
+            "match research archive enabled (see docs/ARCHIVE.md)"
+        );
+        Some(arch)
+    } else {
+        None
+    };
+
     if let Some(period) = config.watchlist_reload {
         let hot = Arc::clone(&watchlist);
         let watch_path = config.watchlist_file.clone();
         let suppress_path = config.suppress_file.clone();
         let glue_path = config.glue_file.clone();
+        let archive_for_reload = archive.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(period).await;
@@ -101,6 +129,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "hot-swapping domain watchlist"
                         );
                         hot.swap(updated);
+                        if let Some(arch) = &archive_for_reload {
+                            match write_config_snapshot(
+                                arch.dir(),
+                                &watch_path,
+                                &suppress_path,
+                                &glue_path,
+                            ) {
+                                Ok(prov) => {
+                                    arch.provenance().store(Arc::new(prov));
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        error = %err,
+                                        "archive config snapshot on reload failed"
+                                    );
+                                }
+                            }
+                        }
                     }
                     Ok(Err(err)) => {
                         tracing::warn!(error = %err, "watchlist reload failed");
@@ -121,7 +167,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shutdown_for_signal.cancel();
     });
 
-    let metrics = PipelineMetrics::new();
+    // Daily config snapshot + disk warn while archive is enabled.
+    if let Some(arch) = archive.clone() {
+        let watch_path = config.watchlist_file.clone();
+        let suppress_path = config.suppress_file.clone();
+        let glue_path = config.glue_file.clone();
+        let stop = shutdown.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            ticker.tick().await; // skip immediate fire (startup already snapped)
+            loop {
+                tokio::select! {
+                    _ = stop.cancelled() => break,
+                    _ = ticker.tick() => {
+                        match write_config_snapshot(
+                            arch.dir(),
+                            &watch_path,
+                            &suppress_path,
+                            &glue_path,
+                        ) {
+                            Ok(prov) => {
+                                arch.provenance().store(Arc::new(prov));
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    error = %err,
+                                    "daily archive config snapshot failed"
+                                );
+                            }
+                        }
+                        let bytes = arch.total_bytes_on_disk();
+                        if bytes >= arch.disk_warn_bytes() {
+                            tracing::warn!(
+                                archive_dir_bytes = bytes,
+                                warn_at = arch.disk_warn_bytes(),
+                                "match research archive disk usage above ARCHIVE_DISK_WARN_BYTES"
+                            );
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     tracing::info!(
         certstream_url = %config.certstream_url,
         egress = ?config.egress,
@@ -129,7 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     if let Some(ref bind) = config.status_bind {
-        let status_state = StatusState::new(
+        let mut status_state = StatusState::new(
             Arc::clone(&metrics),
             match config.egress {
                 EgressBackend::Stdout => "stdout",
@@ -138,9 +227,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             (config.egress == EgressBackend::Novelty).then(|| config.novelty_db.clone()),
             (config.egress == EgressBackend::Novelty).then(|| config.novelty_alerts.clone()),
         );
+        if let Some(arch) = archive.clone() {
+            status_state = status_state.with_archive(arch);
+        }
         let shutdown_status = shutdown.clone();
         let bind = bind.clone();
-        // Fail fast if the port is taken — operators rely on /status for keep-up.
         let listener = tokio::net::TcpListener::bind(&bind)
             .await
             .map_err(|e| format!("STATUS_BIND={bind} listen failed: {e}"))?;
@@ -154,7 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match config.egress {
         EgressBackend::Stdout => {
-            run_pipeline_with_metrics(
+            run_pipeline_with_archive(
                 config.certstream_url,
                 watchlist,
                 StdoutSink::new(),
@@ -162,6 +253,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 shutdown,
                 metrics,
                 config.progress_interval,
+                archive,
             )
             .await?;
         }
@@ -183,7 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 alerts = %config.novelty_alerts.display(),
                 "EGRESS=novelty — A′ alerts to local rotated JSONL"
             );
-            run_pipeline_with_metrics(
+            run_pipeline_with_archive(
                 config.certstream_url,
                 watchlist,
                 sink,
@@ -191,6 +283,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 shutdown,
                 metrics,
                 config.progress_interval,
+                archive,
             )
             .await?;
         }

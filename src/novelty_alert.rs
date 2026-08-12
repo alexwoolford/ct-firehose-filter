@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
+use crate::archive::MATCH_ARCHIVE_SCHEMA_VERSION;
 use crate::event::MatchEvent;
 use crate::novelty::NoveltyStore;
 
@@ -48,6 +49,8 @@ const ROUTINE_LEFT: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NoveltyAlert {
+    /// Join key with research archive lines (`MATCH_ARCHIVE_SCHEMA_VERSION`).
+    pub schema_version: u32,
     pub tier: &'static str,
     pub coalition: Option<Vec<String>>,
     pub brand: Option<String>,
@@ -175,6 +178,7 @@ pub fn process_match(
             } else {
                 stats.alerts_a = 1;
                 alerts.push(NoveltyAlert {
+                    schema_version: MATCH_ARCHIVE_SCHEMA_VERSION,
                     tier: "A",
                     coalition: Some(brands),
                     brand: None,
@@ -207,6 +211,7 @@ pub fn process_match(
     if !novel_interesting.is_empty() {
         stats.alerts_b = 1;
         alerts.push(NoveltyAlert {
+            schema_version: MATCH_ARCHIVE_SCHEMA_VERSION,
             tier: "B",
             coalition: None,
             brand: Some(brand),
