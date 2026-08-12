@@ -1,13 +1,15 @@
-# SaaS / marketing / WAF / DAM / CRS glue apexes (this filter only).
-# Merged with SUPPRESS_FILE at load. These names create false multi-brand
-# coalitions on shared SANs; stripping them leaves co-named customer brands.
-# Do NOT put high-volume watchlist brands here.
+# Platform / co-tenant glue apexes (this filter only).
+# Multi-tenant SaaS that forge false multi-brand coalitions on shared SANs;
+# stripping them leaves co-named customer brands. Merged with SUPPRESS_FILE at
+# load (identical strip semantics — this file is the ops home for platforms).
+# Do NOT put high-volume watchlist brands or corporate families here.
 # Do NOT put mega-apex CT infra here (amazonaws, google, …) — use suppress.txt.
 #
-# Promote only clear multi-tenant platforms (ESP/WAF/DAM/CRS/privacy SaaS)
-# with high unrelated partner fan-out; leave corporate families out.
-# Prefer NOVELTY_MAX_COALITION size capping over endless brand suppress.
+# Promote only clear multi-tenant platforms (ESP/WAF/DAM/CRS/privacy/WP SaaS)
+# with high unrelated partner fan-out. Prefer NOVELTY_MAX_COALITION size capping
+# over endless brand suppress.
 # Rank candidates with: cargo run --release --example mine_glue -- <match.jsonl> suppress.txt 40
+# (pass a combined suppress+glue file so existing glue is not re-suggested).
 #
 # Blank lines and # comments are ignored. Missing GLUE_FILE ⇒ no glue strip.
 
@@ -34,3 +36,12 @@ datagrail.io
 
 # WordPress / Automattic customer hostnames on tls.automattic.com
 automattic.com
+
+# IR / investor-relations web hosting (live archive mine_glue ~12h)
+gcs-web.com
+notified.com
+
+# Multi-tenant SaaS hubs (unrelated partner fan-out on shared SANs)
+sqwadhq.com
+craftpeak.com
+voyav.com

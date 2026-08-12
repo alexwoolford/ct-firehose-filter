@@ -22,7 +22,9 @@ struct NoveltyInner {
     alerts: BufWriter<std::fs::File>,
 }
 
-/// Local durable product sink. Raw matches never touch disk.
+/// Local durable product sink (SQLite + alerts.jsonl).
+/// Raw MatchEvents are not written by this sink; the optional research archive
+/// (`ARCHIVE_DIR`) is a separate writer on the enqueue path.
 pub struct NoveltySink {
     inner: Mutex<NoveltyInner>,
     ignore: HashSet<String>,

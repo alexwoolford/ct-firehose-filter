@@ -185,8 +185,9 @@ After `novelty.db` exists on the host and looks healthy, set `NOVELTY_REQUIRE_DB
 |---|---|
 | Mount full `domains.txt` | Run prod egress on demo `keywords.txt` (startup guard aborts) |
 | Keep `certstream-data` volume + host `/var/lib/ct-firehose-filter` | Casual `down -v` (wipes CertStream indexes) |
-| Treat **alerts.jsonl** as the product | Persist raw MatchEvents to disk |
-| Use `EGRESS=novelty` | Use `EGRESS=stdout` in production (fills the disk) |
+| Treat **alerts.jsonl** as the product feed | Treat raw MatchEvents / `stdout` as the product (fills the disk) |
+| Keep the research archive on (`ARCHIVE_DIR`; default under novelty) | Disable the archive unless you accept irreversible filter decisions |
+| Use `EGRESS=novelty` | Use `EGRESS=stdout` in production |
 | Flip `NOVELTY_REQUIRE_DB=1` after first healthy boot | Cold-start with `REQUIRE_DB=1` missing |
 
 ## Advanced: systemd (no Docker)

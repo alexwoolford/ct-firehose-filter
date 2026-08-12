@@ -1,6 +1,9 @@
-# CT mega-apex suppress list (this filter only).
-# Exact eTLD+1 watchlist hits on these names are stripped before egress so the
-# firehose stays needle-shaped. Does not edit domains.txt / the shared watchlist.
+# Mega-apex / infra volume strip (this filter only).
+# High-volume CT infra apexes that may remain on domains.txt; exact eTLD+1 hits
+# are stripped before enqueue so the firehose stays needle-shaped.
+# Merged with glue.txt at load (same code path). Prefer glue.txt for multi-tenant
+# platforms that forge fake multi-brand coalitions — keep this file for infra volume.
+# Does not edit domains.txt / the shared watchlist.
 #
 # Blank lines and # comments are ignored. Missing SUPPRESS_FILE ⇒ no suppression.
 

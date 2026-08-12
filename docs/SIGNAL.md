@@ -2,6 +2,26 @@
 
 Assessment of a **15-minute tip capture** (full ~752k watchlist + [`suppress.txt`](../suppress.txt)) against the original early-hint intent. Capture a dump with [`live_smoke`](../examples/live_smoke.rs) (example path: `/tmp/ct-ma-eval.jsonl`; the numbers below are from one such run: 267,680 events, 0 reconnects).
 
+## Three streams (A′ / B′ vs research archive)
+
+A′ and B′ are **novelty alert types** (both “first-seen”), not “matches vs novel.” Prod runs **A′ only**. The research archive is a separate stream of enqueued MatchEvents — it is **not** B′.
+
+```text
+watchlist match (enqueue)
+    ├─→ archive/matches.jsonl     research: every enqueue + full SAN list
+    └─→ novelty
+          ├─ A′  ≥2 brands, first coalition → alerts.jsonl + novelty.db
+          └─ B′  first (brand, host) — OFF unless NOVELTY_TIERS includes B
+```
+
+| Stream | Meaning | Prod disk |
+|---|---|---|
+| **Research archive** | Every enqueued match (before novelty gates) | `archive/matches.jsonl` — rotate+gzip, no total prune ([`ARCHIVE.md`](ARCHIVE.md)) |
+| **A′** | First-seen multi-brand coalition (≤5 brands, SAN gates) | Full alert → `alerts.jsonl` (**20 GiB** prune); keys stay in `novelty.db` |
+| **B′** | First-seen `(brand, host)`, skip routine labels | **Not emitted / not stored** under default `NOVELTY_TIERS=A` |
+
+“All A′ forever” is false for JSONL payloads: oldest `alerts.jsonl` chunks can be deleted at the 20 GiB budget while `novelty.db` coalition keys remain (so renewals stay quiet). Single-brand matches are **not** “cached B′”; with the archive on they land in `matches.jsonl`, which is still not a B′ feed.
+
 ## Intent (mosaic tile)
 
 1. Watch hundreds of thousands of company domains on live CT (not toy keywords).
@@ -10,18 +30,20 @@ Assessment of a **15-minute tip capture** (full ~752k watchlist + [`suppress.txt
 
 CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev research and Neo4j relationship demos; dangerous if oversold as a trading feed.
 
-## What the edge achieved
+## What the edge achieved (pre-novelty tip eval)
+
+Numbers below are from the **raw 15m MatchEvent dump** before in-process novelty shipped. They explain why A′ was required — not the current prod posture.
 
 | Layer | Result | Intent met? |
 |---|---|---|
 | Firehose → watchlist match | Works at scale (~47k brands hit in 15m) | Yes |
 | Mega-apex suppress | Cut ~3.2M emits; remaining still ~1M/hr extrapolated | Partial |
-| Human-ready diligence trickle | Raw emit still too hot | No |
-| Early-warning classifier / novelty store | Out of scope for this binary | N/A |
+| Human-ready diligence trickle | Raw emit still too hot | No (solved later by A′) |
+| Early-warning / novelty store | **Now in-scope** via `EGRESS=novelty` → `novelty.db` + `alerts.jsonl` | Yes (product path) |
 
-**Volume:** ~268k emits / 15m ≈ **1.07M/hr**. Top 20 brands ≈22% of events. Roughly half of events come from brands with ≥100 hits in the window (routine infra churn).
+**Volume (raw dump):** ~268k emits / 15m ≈ **1.07M/hr**. Top 20 brands ≈22% of events. Roughly half of events come from brands with ≥100 hits in the window (routine infra churn).
 
-**Verdict on the filter:** engineering goal met (needle-shaped *relative to* CT). Product feed a human can act on without another stage: **not yet**.
+**Verdict on the filter:** engineering goal met (needle-shaped *relative to* CT). Raw emit alone is not human-ready; **warm A′** is the product trickle (~tens/hour).
 
 ## Noise vs signal
 
@@ -50,10 +72,10 @@ Strongest pattern: **one cert naming multiple watchlist brands** that share a co
 - `deere.com` + `harvestprofit.com`
 - `adeccogroup.com` + `akka-technologies.com`
 
-After stripping SaaS glue brands (see [`glue.txt`](../glue.txt)): **1,874** Tier A
-events and **1,122** unique brand coalitions in the ranked 15m dump (`rank_signal`).
+After stripping SaaS glue brands (see [`glue.txt`](../glue.txt)): **1,874** `rank_signal` Tier A
+events and **1,122** unique brand coalitions in the ranked 15m dump.
 
-Much of that is **confirmation of known ownership / ongoing ops**, not pre-announcement surprise. True early warning needs **novelty** (first-seen host or brand-pair), which this edge does not store.
+Much of that is **confirmation of known ownership / ongoing ops**, not pre-announcement surprise. True early warning needs **novelty** (first-seen host or brand-pair). The raw tip dump had no durable store; **prod now keeps first-seen coalition keys in `novelty.db`** (`EGRESS=novelty`).
 
 Scarce single-brand hosts (quiet brand, unusual subdomain) are a second, weaker vein — only interesting after “never seen before.”
 
@@ -77,14 +99,22 @@ Gold is not in reading 268k lines. Rank downstream:
 
 **Do not** suppress high-volume *brands* off the shared watchlist. Cut noise with glue strip, dedupe, and ranking.
 
+**Strip lists (same code path, different ops intent):**
+- [`suppress.txt`](../suppress.txt) — **mega-apex / infra volume** (AWS, Google, … still on `domains.txt`, stripped at egress)
+- [`glue.txt`](../glue.txt) — **platform / co-tenant glue** (ESP/WAF/DAM/CRS/WP that forge fake multi-brand SANs)
+
+Code merges both into one ignore set (`load_suppress_and_glue`). Keep corporate families out of either file.
+
 | Lever | Mechanism | On the 15m dump |
 |---|---|---|
-| Mega-apex [`suppress.txt`](../suppress.txt) | Edge strip | Already applied at capture |
-| Glue [`glue.txt`](../glue.txt) | Merged into suppress at load (`GLUE_FILE`) | 9 names after `mine_glue` review (was 3) |
+| Mega-apex [`suppress.txt`](../suppress.txt) | Edge strip (infra volume) | Already applied at capture |
+| Glue [`glue.txt`](../glue.txt) | Merged at load (`GLUE_FILE`) | See `glue.txt` (human-reviewed; count drifts) |
 | In-window dedupe | Sorted `matched_domains` (+ real fingerprint) | 267,680 → 225,473 (−16%) |
-| Tier A coalitions | ≥2 non-glue `matched_keywords` | **1,874** events, **1,122** unique pairs |
-| Tier B first host | First `(brand, host)` in file order | 194,957 (cold-start dump ≈ almost every host once) |
-| Tier C rest | Renewals / empty after glue | 28,642 |
+| `rank_signal` Tier A coalitions | ≥2 non-glue `matched_keywords` | **1,874** events, **1,122** unique pairs |
+| `rank_signal` Tier B first host | First `(brand, host)` in file order | 194,957 (cold-start dump ≈ almost every host once) |
+| `rank_signal` Tier C rest | Renewals / empty after glue | 28,642 |
+
+**Naming:** offline `rank_signal` Tier A/B/C ≠ novelty product **A′ / B′**. Product defaults to A′ only.
 
 Offline tools (pass your own MatchEvent JSONL):
 
@@ -99,7 +129,7 @@ cargo run --release --example mine_glue -- \
 ```
 
 **Glue method:** rank brands on multi-keyword certs by distinct co-brand partners × log(events). Promote only clear multi-tenant platforms (ESP/WAF/DAM/CRS/privacy SaaS). Leave corporate families (`optum`+`uhc`, `westpac`+`stgeorge`, …) out. Example [`glue.txt`](../glue.txt) includes `mailchimp.com`, `highq.com`, `synxis.com`, `sabre.com`, `mynuvola.com`, `datagrail.io` on top of marketing/WAF/DAM seeds.
-**Read the tiers carefully:** on a *cold* dump, Tier B looks huge because every host is “first seen.” Durable novelty (SQLite on brand-pairs and hosts) is what turns *pair* renewals quiet; tip CT still mints many unique hosts, so **human ops should start with Tier A′ only**.
+**Read the `rank_signal` tiers carefully:** on a *cold* dump, Tier B looks huge because every host is “first seen.” Durable novelty (SQLite on brand-pairs and hosts) is what turns *pair* renewals quiet; tip CT still mints many unique hosts, so **human ops should start with novelty A′ only**.
 
 Avoid: volume-based brand suppress, `vpn`/`sso`/`merge` hard filters, fuzzy SLD matching.
 
@@ -124,13 +154,27 @@ cargo run --release --example novelty_replay -- \
   /tmp/ct-ma-eval.jsonl /tmp/ct-novelty.db /tmp/ct-novelty-alerts.jsonl
 ```
 
-**Semantics:** alert JSONL lines are emitted only when `INSERT OR IGNORE` inserts a new row. Coalition renewals (Optum+UHC again) stay silent after the first sighting; a *new* pair still fires. Hosts under an A′ event are recorded in `hosts` without separate B′ alerts.
+**Semantics:** alert JSONL lines are emitted only when `INSERT OR IGNORE` inserts a new row. Coalition renewals (Optum+UHC again) stay silent after the first sighting; a *new* pair still fires. Under default **A′-only**, the `hosts` table is **not** written (avoids brand×host growth). Host rows appear only when `NOVELTY_TIERS` includes `B`.
+
+### `alerts.jsonl` shape (`NoveltyAlert`)
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1` — join key with archive lines (`MATCH_ARCHIVE_SCHEMA_VERSION`). **Always present on new writes**; lines from before the archive cutover may omit it |
+| `tier` | `"A"` or `"B"` |
+| `coalition` | Sorted brands (A′); null on B′ |
+| `brand` / `host` / `novel_hosts` | B′ fields; null on A′ |
+| `event` | Nested `MatchEvent` (`matched_domains`, `matched_keywords`, `seen`, `source`, `fingerprint`, `san_count`) |
+
+Join alert → archive / crt.sh via `event.fingerprint` (soft join; no separate `event_id`). Alerts stay thin — full SAN lists live in `archive/matches.jsonl`.
+
+**Retention:** A′ **payloads** in `alerts.jsonl` rotate at 256 MiB and prune when live+archives exceed **20 GiB** — you can lose old alert lines while `novelty.db` still remembers the coalition key. Back up JSONL if you need a durable alert history for customers or case studies.
 
 **Warm-DB note:** tip CT still mints many unique hosts, so **human ops should start with Tier A′ only** (~4.5k/hr extrapolated unique coalitions cold; far lower once warm).
 
 ## Shoestring persistence (survive restarts)
 
-With `EGRESS=novelty`, A′ runs **in-process** in the filter. The product trickle is a **stateful delta filter**: emit only **first-seen** coalition keys (`INSERT OR IGNORE`). Repeat Optum+UHC → no alert. State lives in SQLite (`coalitions` + `hosts`), with `PRAGMA journal_mode=WAL`.
+With `EGRESS=novelty`, A′ runs **in-process** in the filter. The product trickle is a **stateful delta filter**: emit only **first-seen** coalition keys (`INSERT OR IGNORE`). Repeat Optum+UHC → no alert. State lives in SQLite (`coalitions`; `hosts` only when B′ is enabled), with `PRAGMA journal_mode=WAL`.
 
 **Primary (shoestring):** keep `NOVELTY_DB` on a durable Oracle boot/block volume at `/var/lib/ct-firehose-filter/novelty.db` — **never `/tmp` in prod**. Compose bind-mounts that host directory into the filter; systemd uses the same path.
 

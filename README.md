@@ -10,9 +10,32 @@ is best-effort only. **Product go-live** = `EGRESS=novelty` (in-process A′ →
 ([`docs/DEPLOY.md`](docs/DEPLOY.md)). Scale: [`docs/SCALE.md`](docs/SCALE.md). Ops:
 [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md). Signal quality: [`docs/SIGNAL.md`](docs/SIGNAL.md).
 
-Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). High-volume CT infra apexes (Amazon, Google, …) may remain on the shared watchlist file but are stripped at egress via [`suppress.txt`](suppress.txt) (mega-apex) plus [`glue.txt`](glue.txt) (marketing/WAF/DAM/CRS glue that fakes multi-brand SANs) so this edge stays needle-shaped.
+Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). Two egress strip lists (merged in code; ops taxonomy only):
 
-Raw emit after suppress is still mostly routine cert churn. In-process A′ novelty turns multi-brand first-seens into a reviewable trickle on disk; single-brand matches are discarded in RAM.
+- [`suppress.txt`](suppress.txt) — **mega-apex / infra volume** (Amazon, Google, … may stay on `domains.txt` but are stripped here)
+- [`glue.txt`](glue.txt) — **platform / co-tenant glue** (ESP/WAF/DAM/CRS/WP apexes that forge fake multi-brand SANs)
+
+Do not put corporate families in either file.
+
+Raw emit after suppress is still mostly routine cert churn. In-process A′ novelty turns multi-brand first-seens into a reviewable trickle on disk; single-brand matches are discarded from the **product** path (they still land in the research archive when enabled).
+
+### Three streams (do not confuse A′ / B′ with the archive)
+
+```text
+watchlist match (enqueue)
+    ├─→ archive/matches.jsonl     research: every enqueue + full SAN list (not B′)
+    └─→ novelty (EGRESS=novelty)
+          ├─ A′  ≥2 brands, first-seen coalition → alerts.jsonl + novelty.db
+          └─ B′  first (brand, host) — OFF in prod (NOVELTY_TIERS=A)
+```
+
+| Stream | What it is | On disk (prod) |
+|---|---|---|
+| **Research archive** | All enqueued matches (single- and multi-brand) | `archive/matches.jsonl` — rotate+gzip, **no** total prune |
+| **A′** | First-seen multi-brand coalition (high-SNR diligence) | `alerts.jsonl` (20 GiB prune) + coalition keys in `novelty.db` (kept) |
+| **B′** | First-seen host under a brand (noisy tip churn) | **Not written** unless you opt in `NOVELTY_TIERS=A,B` |
+
+Details: [`docs/SIGNAL.md`](docs/SIGNAL.md) (A′/B′), [`docs/ARCHIVE.md`](docs/ARCHIVE.md) (research archive).
 
 This repo is **not** a full entity-resolution product (no SEC CIK/LEI mapping, no pDNS wildcard piercing, no FIX / warehouse feeds). Off-box streaming of alerts is **out of scope for now**.
 

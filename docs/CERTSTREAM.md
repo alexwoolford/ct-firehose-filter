@@ -108,10 +108,11 @@ Goal: firehose → in-process A′ trickle to rotated `alerts.jsonl`, without fi
 3. **Filter logs:** `RUST_LOG=warn` in prod (reconnect / backpressure / failures). Progress counters are `info` (visible when `RUST_LOG=info`); on Oracle use **`curl http://127.0.0.1:9100/status`** (Compose publishes loopback only).
 4. **Rotate container logs.** Compose sets `json-file` `max-size: 10m` / `max-file: 3` on all services.
 5. **Novelty disk bounds:** A′-only skips `hosts` rows; chunk rotate + **20 GiB** total budget + gzip (`NOVELTY_ALERTS_*`).
-6. **systemd/journald:** configure `SystemMaxUse=` / rate limits if not using Docker.
-7. **Resources:** ~100 MiB RSS for a 752k watchlist HashSet (measured — [`SCALE.md`](SCALE.md)) + ~0.5–2 GB for CertStream; CPU follows CT rate;
-   durable disk ≈ rotated logs + compact `novelty.db` + budget-capped alerts (+ tiny `ct_index.json`).
-8. **Pre-flight:** [`DEPLOY.md`](DEPLOY.md#pre-flight-before-oracle-disk--crash) smoke / soak / wipe-restore drill before cutover.
+6. **Research archive:** default `ARCHIVE_DIR=/var/lib/ct-firehose-filter/archive` under novelty — rotate+gzip, **no** total prune; budget ~0.5–3 GB/day compressed; `/status` warns at `ARCHIVE_DISK_WARN_BYTES` (100 GiB). Disable with `ARCHIVE_DIR=off` only if you accept irreversible filters. See [`ARCHIVE.md`](ARCHIVE.md).
+7. **systemd/journald:** configure `SystemMaxUse=` / rate limits if not using Docker.
+8. **Resources:** ~100 MiB RSS for a 752k watchlist HashSet (measured — [`SCALE.md`](SCALE.md)) + ~0.5–2 GB for CertStream; CPU follows CT rate;
+   durable disk ≈ rotated logs + compact `novelty.db` + budget-capped alerts + **research archive** (+ tiny `ct_index.json`).
+9. **Pre-flight:** [`DEPLOY.md`](DEPLOY.md#pre-flight-before-oracle-disk--crash) smoke / soak / wipe-restore drill before cutover.
 
 ## Keep-up visibility (are we behind CertStream?)
 
@@ -189,7 +190,8 @@ Matching still sees SANs; you just transfer less JSON per cert.
 | Disconnects | Exponential backoff + jitter; WebSocket ping every 30s |
 | Delivery | Local `alerts.jsonl` on durable volume (budget-capped + rotate/gzip) |
 | Novelty state | SQLite on durable volume (`NOVELTY_DB`); never `/tmp`; backup = local file copy / `sqlite3 .backup` |
-| Disk | `EGRESS=novelty`, `RUST_LOG=warn`, Docker log rotation |
+| Research archive | `ARCHIVE_DIR` matches.jsonl (+ gzip); no total prune — plan off-box copy |
+| Disk | `EGRESS=novelty`, `RUST_LOG=warn`, Docker log rotation; watch archive growth |
 | RAM | ~0.1 GB watchlist (measured) + ~0.5–2 GB CertStream; Oracle 12 GB OK |
 | Dependencies | crates.io only (`deny.toml`); CI runs `cargo deny` + `cargo audit` |
 | Watchlist drift | Optional `WATCHLIST_RELOAD_SECS` |

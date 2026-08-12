@@ -10,13 +10,15 @@ A′ alone cannot answer “what would the feed look like under different glue /
 Renewals, single-brand matches, and oversize/mega-SAN decisions leave little or no
 payload on disk. Every week without an archive is a week you cannot replay.
 
-## Layers
+## What lands where (not A′ / B′ novelty tiers)
 
-| Layer | Path | Role |
+Do **not** confuse these with novelty **A′ / B′** alerts ([`SIGNAL.md`](SIGNAL.md#three-streams-a--b-vs-research-archive)).
+
+| Stream | Path | Role |
 |---|---|---|
-| **A — Product** | `novelty.db` + `alerts.jsonl` | Human / eventual customer A′ feed |
-| **B — Archive** | `ARCHIVE_DIR/matches.jsonl` (+ `.*.gz`) | Every **enqueued** match + full SAN list |
-| **C — Config** | `ARCHIVE_DIR/config_snapshots/<id>/` | Watchlist / suppress / glue copies + `meta.json` |
+| **Product (A′)** | `novelty.db` + `alerts.jsonl` | Human / eventual customer first-seen multi-brand feed |
+| **Research archive** | `ARCHIVE_DIR/matches.jsonl` (+ `.*.gz`) | Every **enqueued** match + full SAN list (includes single-brand; **not** a B′ feed) |
+| **Config provenance** | `ARCHIVE_DIR/config_snapshots/<id>/` | Watchlist / suppress / glue copies + `meta.json` |
 
 ## Schema v1 (`MatchArchiveEvent`)
 
@@ -33,7 +35,16 @@ Each JSONL line:
 | `seen` / `source` / `fingerprint` / `san_count` | From CertStream / inspect |
 | `drop_stage` | Always `enqueued` here (novelty gates are product-side) |
 
-A′ alerts also carry `schema_version: 1` for joinability.
+### `alerts.jsonl` (`NoveltyAlert`) — product lines
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | `1` — same constant as archive; **always written by current builds**. Older alert lines (pre-archive cutover) may omit it |
+| `tier` | `"A"` (prod) or `"B"` (opt-in) |
+| `coalition` / `brand` / `host` / `novel_hosts` | A′ vs B′ payload |
+| `event` | Nested `MatchEvent` (matched hits, `fingerprint`, `seen`, `source`, `san_count`) — **not** full `all_domains` |
+
+**Join:** `event.fingerprint` ↔ archive `fingerprint` (and crt.sh SHA-1). No separate `event_id`.
 
 ## Enable / path
 
