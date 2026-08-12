@@ -67,7 +67,11 @@ services:
       RECONNECT_DELAY_MS: "2000"
       RECONNECT_MAX_DELAY_MS: "60000"
       PROGRESS_INTERVAL_SECS: "30"
+      STATUS_BIND: "0.0.0.0:9100"
       RUST_LOG: info
+    ports:
+      # Host loopback only — no auth; do not publish on 0.0.0.0.
+      - "127.0.0.1:9100:9100"
     volumes:
       # Mount your domain list here (demo keywords.txt by default).
       - ${WATCHLIST_HOST_PATH:-./keywords.txt}:/data/watchlist.txt:ro

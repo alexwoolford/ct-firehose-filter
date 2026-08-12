@@ -105,13 +105,32 @@ Goal: firehose → in-process A′ trickle to rotated `alerts.jsonl`, without fi
 
 1. **Seed index** on first boot; keep the `certstream-data` volume (avoid casual `down -v`).
 2. **`EGRESS=novelty` only** in shoestring production — not `stdout`.
-3. **Filter logs:** `RUST_LOG=warn` (reconnect / backpressure / failures). Progress counters are `debug`.
+3. **Filter logs:** `RUST_LOG=warn` in prod (reconnect / backpressure / failures). Progress counters are `info` (visible when `RUST_LOG=info`); on Oracle use **`curl http://127.0.0.1:9100/status`** (Compose publishes loopback only).
 4. **Rotate container logs.** Compose sets `json-file` `max-size: 10m` / `max-file: 3` on all services.
 5. **Novelty disk bounds:** A′-only skips `hosts` rows; chunk rotate + **20 GiB** total budget + gzip (`NOVELTY_ALERTS_*`).
 6. **systemd/journald:** configure `SystemMaxUse=` / rate limits if not using Docker.
 7. **Resources:** ~100 MiB RSS for a 752k watchlist HashSet (measured — [`SCALE.md`](SCALE.md)) + ~0.5–2 GB for CertStream; CPU follows CT rate;
    durable disk ≈ rotated logs + compact `novelty.db` + budget-capped alerts (+ tiny `ct_index.json`).
 8. **Pre-flight:** [`DEPLOY.md`](DEPLOY.md#pre-flight-before-oracle-disk--crash) smoke / soak / wipe-restore drill before cutover.
+
+## Keep-up visibility (are we behind CertStream?)
+
+True CT tip lag (log head vs last processed) is **not** available from CertStream lite frames. Use these proxies:
+
+| Signal | Healthy | Falling behind |
+|---|---|---|
+| `channel_full` (status JSON / progress log) | stays `0` | rising — match channel saturated |
+| `frames_per_sec` / `frames_seen` | nonzero while CertStream is live | flat after warmup |
+| `reconnects` | rare | frequent WS drops / catch-up risk |
+| CertStream queue / metrics | sidecar `:8080` localhost metrics | growing backlog in CertStream |
+
+```bash
+# On the VM (Compose publishes 127.0.0.1 only — not public)
+curl -s http://127.0.0.1:9100/healthz
+curl -s http://127.0.0.1:9100/status | jq .
+```
+
+Bind inside the container is `STATUS_BIND=0.0.0.0:9100` (required for port publish). Host publish is `127.0.0.1:9100:9100`. Set `STATUS_BIND=` empty / `off` to disable the server (e.g. local stdout smokes). Do **not** open `9100` on the Oracle NSG.
 
 ## Cheap continuous host (US, under ~$10/mo)
 

@@ -65,7 +65,7 @@ pub async fn run_progress_logger(
             _ = shutdown.cancelled() => break,
             _ = ticker.tick() => {
                 let s = metrics.snapshot();
-                tracing::debug!(
+                tracing::info!(
                     frames_seen = s.frames_seen,
                     frames_ignored = s.frames_ignored,
                     frames_malformed = s.frames_malformed,

@@ -16,6 +16,8 @@ const DEFAULT_FLUSH_SECS: u64 = 5;
 const DEFAULT_RECONNECT_MS: u64 = 2_000;
 const DEFAULT_RECONNECT_MAX_MS: u64 = 60_000;
 const DEFAULT_PROGRESS_SECS: u64 = 30;
+/// Inside-container bind so Compose can publish `127.0.0.1:9100:9100`.
+const DEFAULT_STATUS_BIND: &str = "0.0.0.0:9100";
 /// Minimum watchlist size when `EGRESS=novelty` (blocks accidental demo `keywords.txt` in prod).
 const DEFAULT_PROD_WATCHLIST_MIN_LEN: usize = 100_000;
 
@@ -66,6 +68,9 @@ pub struct Config {
     pub progress_interval: Duration,
     /// When `EGRESS=novelty`, refuse tiny demo watchlists.
     pub watchlist_min_len: usize,
+    /// HTTP status bind (`/healthz`, `/status`). `None` disables the server.
+    /// Default `0.0.0.0:9100`; set `STATUS_BIND=` empty / `off` to disable.
+    pub status_bind: Option<String>,
 }
 
 impl Config {
@@ -106,6 +111,7 @@ impl Config {
         let reconnect_ms = parse_u64_env("RECONNECT_DELAY_MS", DEFAULT_RECONNECT_MS)?;
         let reconnect_max_ms = parse_u64_env("RECONNECT_MAX_DELAY_MS", DEFAULT_RECONNECT_MAX_MS)?;
         let progress_secs = parse_u64_env("PROGRESS_INTERVAL_SECS", DEFAULT_PROGRESS_SECS)?;
+        let status_bind = parse_status_bind();
 
         let watchlist_min_len = match env::var("WATCHLIST_MIN_LEN") {
             Ok(raw) => raw.parse().map_err(|e| ConfigError::InvalidValue {
@@ -154,6 +160,7 @@ impl Config {
             watchlist_reload,
             progress_interval: Duration::from_secs(progress_secs),
             watchlist_min_len,
+            status_bind,
         };
         cfg.validate()?;
         Ok(cfg)
@@ -222,6 +229,25 @@ impl Config {
     }
 }
 
+/// `STATUS_BIND` unset → default listen addr; empty / `off` / `disabled` → no server.
+fn parse_status_bind() -> Option<String> {
+    match env::var("STATUS_BIND") {
+        Err(_) => Some(DEFAULT_STATUS_BIND.to_string()),
+        Ok(raw) => {
+            let s = raw.trim();
+            if s.is_empty()
+                || s.eq_ignore_ascii_case("off")
+                || s.eq_ignore_ascii_case("disabled")
+                || s.eq_ignore_ascii_case("none")
+            {
+                None
+            } else {
+                Some(s.to_string())
+            }
+        }
+    }
+}
+
 fn parse_usize_env(key: &'static str, default: usize) -> Result<usize, ConfigError> {
     match env::var(key) {
         Ok(raw) => raw.parse().map_err(|e| ConfigError::InvalidValue {
@@ -260,6 +286,7 @@ mod tests {
             watchlist_reload: None,
             progress_interval: Duration::from_secs(30),
             watchlist_min_len: 0,
+            status_bind: Some(DEFAULT_STATUS_BIND.into()),
         }
     }
 

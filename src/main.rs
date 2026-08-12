@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use ct_firehose_filter::{
-    load_domain_file, load_suppress_and_glue, run_pipeline_with_metrics, Config, DomainWatchlist,
-    EgressBackend, HotWatchlist, NoveltyPolicy, NoveltySink, PipelineMetrics, StartupError,
-    StdoutSink,
+    load_domain_file, load_suppress_and_glue, run_pipeline_with_metrics, serve_status, Config,
+    DomainWatchlist, EgressBackend, HotWatchlist, NoveltyPolicy, NoveltySink, PipelineMetrics,
+    StartupError, StatusState, StdoutSink,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -127,6 +127,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         egress = ?config.egress,
         "starting CT firehose edge filter"
     );
+
+    if let Some(ref bind) = config.status_bind {
+        let status_state = StatusState::new(
+            Arc::clone(&metrics),
+            match config.egress {
+                EgressBackend::Stdout => "stdout",
+                EgressBackend::Novelty => "novelty",
+            },
+            (config.egress == EgressBackend::Novelty).then(|| config.novelty_db.clone()),
+            (config.egress == EgressBackend::Novelty).then(|| config.novelty_alerts.clone()),
+        );
+        let shutdown_status = shutdown.clone();
+        let bind = bind.clone();
+        // Fail fast if the port is taken — operators rely on /status for keep-up.
+        let listener = tokio::net::TcpListener::bind(&bind).await.map_err(|e| {
+            format!("STATUS_BIND={bind} listen failed: {e}")
+        })?;
+        tracing::info!(%bind, "status server listening (/healthz, /status)");
+        tokio::spawn(async move {
+            if let Err(err) = serve_status(listener, status_state, shutdown_status).await {
+                tracing::error!(error = %err, "status server stopped with error");
+            }
+        });
+    }
 
     match config.egress {
         EgressBackend::Stdout => {

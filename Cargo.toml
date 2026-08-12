@@ -29,6 +29,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 flate2 = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"] }

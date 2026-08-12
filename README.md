@@ -97,6 +97,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.
 Prod overlay sets `EGRESS=novelty`, `RUST_LOG=warn`, `WATCHLIST_MIN_LEN=100000`,
 Docker log rotation (`10m` × 3), and alert chunk/budget caps (256 MiB chunks, 20 GiB total, gzip).
 Output: `/var/lib/ct-firehose-filter/alerts.jsonl` (+ rotated `.gz` siblings) and `novelty.db`.
+Keep-up: `curl -s http://127.0.0.1:9100/status | jq` (loopback publish only — see [`CERTSTREAM.md`](docs/CERTSTREAM.md#keep-up-visibility-are-we-behind-certstream)).
 Full checklist: [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md#quiet-production-checklist).
 
 | `EGRESS` | Meaning |
@@ -131,6 +132,7 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `src/novelty.rs` | SQLite first-seen coalitions / hosts |
 | `src/novelty_alert.rs` | shared A′/B′ processing |
 | `src/novelty_sink.rs` | in-process A′ egress (`EGRESS=novelty`) |
+| `src/status.rs` | `/healthz` + `/status` JSON (loopback scrape) |
 | `src/alerts_file.rs` | chunk rotate + total byte budget + gzip |
 | `glue.txt` | SaaS/marketing glue apexes (merged with suppress) |
 | `suppress.txt` | default CT mega-apex suppress (this filter only) |

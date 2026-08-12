@@ -18,6 +18,7 @@ pub mod novelty_alert;
 pub mod novelty_sink;
 pub mod parse;
 pub mod pipeline;
+pub mod status;
 pub mod watchlist;
 
 pub use alerts_file::{
@@ -51,6 +52,9 @@ pub use parse::{parse_certstream_frame, LeafDomains};
 pub use pipeline::{
     run_pipeline, run_pipeline_with_metrics, MatchEnqueue, PipelineConfig, TryProcessResult,
     DEFAULT_CHANNEL_CAPACITY,
+};
+pub use status::{
+    build_router, run_status_server, serve_status, KeepUpHint, StatusResponse, StatusState,
 };
 pub use watchlist::{
     load_domain_file, load_suppress_and_glue, load_suppress_file, parse_domain_lines,
