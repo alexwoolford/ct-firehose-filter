@@ -81,13 +81,17 @@ impl KeywordAutomaton {
             return None;
         }
 
-        Some(MatchEvent::new(
-            matched_domains,
-            matched_keywords,
-            meta.seen,
-            meta.source.map(str::to_string),
-            meta.fingerprint.map(str::to_string),
-        ))
+        let san_count = u32::try_from(domains.len()).unwrap_or(u32::MAX);
+        Some(
+            MatchEvent::new(
+                matched_domains,
+                matched_keywords,
+                meta.seen,
+                meta.source.map(str::to_string),
+                meta.fingerprint.map(str::to_string),
+            )
+            .with_san_count(san_count),
+        )
     }
 }
 

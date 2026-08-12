@@ -31,3 +31,6 @@ mynuvola.com
 
 # Privacy / consent SaaS co-naming customers
 datagrail.io
+
+# WordPress / Automattic customer hostnames on tls.automattic.com
+automattic.com

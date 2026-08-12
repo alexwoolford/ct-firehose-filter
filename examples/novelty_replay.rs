@@ -95,6 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut alerts_a = 0u64;
     let mut alerts_b = 0u64;
     let mut a_oversized = 0u64;
+    let mut a_mega_san = 0u64;
     let mut seen_dedupe: HashSet<String> = HashSet::new();
     let mut sample_a = 0usize;
 
@@ -116,6 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         alerts_a += stats.alerts_a;
         alerts_b += stats.alerts_b;
         a_oversized += stats.a_oversized_dropped;
+        a_mega_san += stats.a_mega_san_dropped;
 
         for alert in &new_alerts {
             let body = serde_json::to_vec(alert)?;
@@ -141,8 +143,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("require_db:         {require_db}");
     println!("suppress+glue:      {} names", ignore.len());
     println!(
-        "tiers:              A={} B={} skip_routine={} max_coalition={}",
-        policy.want_a, policy.want_b, policy.skip_routine, policy.max_coalition_len
+        "tiers:              A={} B={} skip_routine={} max_coalition={} max_sans={}",
+        policy.want_a,
+        policy.want_b,
+        policy.skip_routine,
+        policy.max_coalition_len,
+        policy.max_san_count
     );
     println!("events_total:       {total}");
     println!("dedupe_dropped:     {dedupe_dropped}");
@@ -150,6 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("fully_ignored:      {fully_ignored}");
     println!("alerts_A_prime:     {alerts_a}");
     println!("a_oversized_drop:   {a_oversized}");
+    println!("a_mega_san_drop:    {a_mega_san}");
     println!("alerts_B_prime:     {alerts_b}");
     println!("alerts_total:       {alert_total}");
     println!("db_coalitions:      {db_pairs}");

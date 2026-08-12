@@ -143,6 +143,7 @@ With `EGRESS=novelty`, A′ runs **in-process** in the filter. The product trick
 | Guard | `NOVELTY_REQUIRE_DB=1` — refuse start if DB missing |
 | Tiers | `NOVELTY_TIERS=A` (default; human-scale). B′ opt-in only |
 | Max coalition | `NOVELTY_MAX_COALITION=5` (drop size ≥6 shared-vendor junk) |
+| Max SANs | `NOVELTY_MAX_SANS=32` (drop Firebase-style mega-SAN packing; `0` disables) |
 | Backup | Local file copy or `sqlite3 … '.backup …'` |
 | Restore | Copy backup over `NOVELTY_DB` **before** starting with `REQUIRE_DB=1` |
 | Alerts rotation | `NOVELTY_ALERTS_MAX_BYTES` (256 MiB chunks) + `NOVELTY_ALERTS_MAX_TOTAL_BYTES` (20 GiB) + gzip |
@@ -202,6 +203,8 @@ cargo run --release --example audit_screened_out -- \
 | Same-SLD TLD variants | 39 | 3.5% |
 
 Mega coalitions (27–37 brands) are almost always **shared-vendor SAN junk**, not relationship signal. Remining “mega-only” brands for new glue found little recurring platform signal. **Fix:** emit A′ only when `coalition_size ≤ 5` (`NOVELTY_MAX_COALITION=5`). After filter: **887** alerts, **0%** size≥6, **230** oversized still remembered in SQLite (no re-alert flood if policy loosens later).
+
+**Mega-SAN packing** (Firebase Hosting etc.): a cert can list **~100 unrelated SANs** while only 2–5 hit the watchlist — that still passes the brand-size cap. **Fix:** plumb raw leaf SAN count on `MatchEvent` and skip A′ emit when `san_count > NOVELTY_MAX_SANS` (default **32**). Coalition is still recorded in SQLite.
 
 Stratified label sample (100 rows) written to `/tmp/aprime-label-sample.jsonl` for human tags: `true_family | shared_vendor | tld_variant | unknown`. Fill ≥100 labels before claiming precision ≥70%.
 

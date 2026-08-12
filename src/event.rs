@@ -10,6 +10,11 @@ pub struct MatchEvent {
     pub seen: Option<f64>,
     pub source: Option<String>,
     pub fingerprint: Option<String>,
+    /// Length of the leaf cert `all_domains` list at inspect time (raw SAN count).
+    /// Used to drop Firebase-style mega-SAN packing that only hits a few watchlist brands.
+    /// `0` means unknown (older JSONL / tests); the mega-SAN gate does not apply.
+    #[serde(default)]
+    pub san_count: u32,
 }
 
 impl MatchEvent {
@@ -20,13 +25,22 @@ impl MatchEvent {
         source: Option<String>,
         fingerprint: Option<String>,
     ) -> Self {
+        let san_count = u32::try_from(matched_domains.len()).unwrap_or(u32::MAX);
         Self {
             matched_domains,
             matched_keywords,
             seen,
             source,
             fingerprint,
+            san_count,
         }
+    }
+
+    /// Override SAN count when the leaf had more names than watchlist hits.
+    #[must_use]
+    pub fn with_san_count(mut self, san_count: u32) -> Self {
+        self.san_count = san_count;
+        self
     }
 
     /// JSON byte length used for batch size accounting.

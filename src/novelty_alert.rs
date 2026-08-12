@@ -64,6 +64,9 @@ pub struct NoveltyPolicy {
     /// Max brands in an A′ coalition (inclusive). Larger coalitions are recorded in DB
     /// but not emitted (shared-vendor SAN junk). Default **5** (drop size ≥ 6).
     pub max_coalition_len: usize,
+    /// Max raw leaf SAN count (inclusive) for A′ emit. Larger certs are recorded in DB
+    /// but not emitted (Firebase/hosting mega-SAN packing). Default **32**. `0` disables.
+    pub max_san_count: u32,
 }
 
 impl Default for NoveltyPolicy {
@@ -73,6 +76,7 @@ impl Default for NoveltyPolicy {
             want_b: false,
             skip_routine: true,
             max_coalition_len: 5,
+            max_san_count: 32,
         }
     }
 }
@@ -90,11 +94,17 @@ impl NoveltyPolicy {
                 want_b,
                 skip_routine: true,
                 max_coalition_len: 5,
+                max_san_count: 32,
             }
         };
         if let Ok(raw) = std::env::var("NOVELTY_MAX_COALITION") {
             if let Ok(n) = raw.parse::<usize>() {
                 policy.max_coalition_len = n;
+            }
+        }
+        if let Ok(raw) = std::env::var("NOVELTY_MAX_SANS") {
+            if let Ok(n) = raw.parse::<u32>() {
+                policy.max_san_count = n;
             }
         }
         policy
@@ -108,6 +118,8 @@ pub struct ProcessStats {
     pub alerts_b: u64,
     /// A′ coalitions inserted but not emitted (size > max_coalition_len).
     pub a_oversized_dropped: u64,
+    /// A′ coalitions inserted but not emitted (san_count > max_san_count).
+    pub a_mega_san_dropped: u64,
 }
 
 /// Apply suppress/glue filter, update novelty DB, return zero or more alerts.
@@ -143,6 +155,11 @@ pub fn process_match(
         if is_new && policy.want_a {
             if brands.len() > policy.max_coalition_len {
                 stats.a_oversized_dropped = 1;
+            } else if policy.max_san_count > 0
+                && ev.san_count > 0
+                && ev.san_count > policy.max_san_count
+            {
+                stats.a_mega_san_dropped = 1;
             } else {
                 stats.alerts_a = 1;
                 alerts.push(NoveltyAlert {
@@ -302,6 +319,66 @@ mod tests {
         assert_eq!(s.a_oversized_dropped, 1);
         assert_eq!(s.alerts_a, 0);
         assert_eq!(store.counts().unwrap().0, 1);
+    }
+
+    #[test]
+    fn a_prime_drops_mega_san_certs() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore = HashSet::new();
+        let policy = NoveltyPolicy {
+            max_san_count: 32,
+            ..NoveltyPolicy::default()
+        };
+        // Four watchlist brands on a Firebase-style ~100-SAN cert.
+        let ev = MatchEvent::new(
+            vec![
+                "welcome.a.com".into(),
+                "b.jp".into(),
+                "studio.c.dk".into(),
+                "cust.d.com".into(),
+            ],
+            vec![
+                "a.com".into(),
+                "b.jp".into(),
+                "c.dk".into(),
+                "d.com".into(),
+            ],
+            Some(1.0),
+            None,
+            Some("fp-mega".into()),
+        )
+        .with_san_count(100);
+        let (alerts, s) = process_match(&store, &ignore, &policy, &ev).unwrap();
+        assert!(alerts.is_empty());
+        assert_eq!(s.a_mega_san_dropped, 1);
+        assert_eq!(s.alerts_a, 0);
+        assert_eq!(s.a_oversized_dropped, 0);
+        assert_eq!(store.counts().unwrap().0, 1);
+
+        // Same brands, small SAN list → emit.
+        let store2 = NoveltyStore::open(":memory:").unwrap();
+        let ev_small = MatchEvent::new(
+            vec![
+                "welcome.a.com".into(),
+                "b.jp".into(),
+                "studio.c.dk".into(),
+                "cust.d.com".into(),
+            ],
+            vec![
+                "a.com".into(),
+                "b.jp".into(),
+                "c.dk".into(),
+                "d.com".into(),
+            ],
+            Some(2.0),
+            None,
+            Some("fp-small".into()),
+        )
+        .with_san_count(10);
+        let (alerts2, s2) = process_match(&store2, &ignore, &policy, &ev_small).unwrap();
+        assert_eq!(alerts2.len(), 1);
+        assert_eq!(s2.alerts_a, 1);
+        assert_eq!(s2.a_mega_san_dropped, 0);
     }
 
     #[test]
