@@ -23,8 +23,9 @@ services:
     logging: *prod-logging
   filter:
     logging: *prod-logging
-    # Named volumes are root-owned; run as root so SQLite can create novelty.db
-    # (same pattern as certstream sidecar). Prefer host bind-mount + ctfilter uid in systemd.
+    # Bind-mount host /var/lib/ct-firehose-filter (domains.txt + novelty.db + alerts).
+    # Run as root so SQLite can write that host dir (opc-owned). CertStream stays on
+    # named volume certstream-data.
     user: "0:0"
     environment:
       EGRESS: novelty
@@ -43,7 +44,4 @@ services:
       NOVELTY_ALERTS_MAX_TOTAL_BYTES: ${NOVELTY_ALERTS_MAX_TOTAL_BYTES:-21474836480}
       NOVELTY_ALERTS_GZIP: ${NOVELTY_ALERTS_GZIP:-1}
     volumes:
-      - novelty-data:/var/lib/ct-firehose-filter
-
-volumes:
-  novelty-data:
+      - /var/lib/ct-firehose-filter:/var/lib/ct-firehose-filter

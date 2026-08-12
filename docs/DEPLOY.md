@@ -174,17 +174,17 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=50 filter
-# Filter quiet at warn; A′ lines append to alerts.jsonl on the novelty-data volume
+# Filter quiet at warn; A′ lines append to host /var/lib/ct-firehose-filter/alerts.jsonl
 ```
 
-After the novelty volume exists and looks healthy, set `NOVELTY_REQUIRE_DB=1` in `.env.prod` and recreate the filter so wipes fail closed. Backup `novelty.db` with a local file copy or `sqlite3 … '.backup …'` (see [`SIGNAL.md`](SIGNAL.md#shoestring-persistence-survive-restarts)).
+After `novelty.db` exists on the host and looks healthy, set `NOVELTY_REQUIRE_DB=1` in `.env.prod` and recreate the filter so wipes fail closed. Backup `novelty.db` with a local file copy or `sqlite3 … '.backup …'` (see [`SIGNAL.md`](SIGNAL.md#shoestring-persistence-survive-restarts)).
 
 ### Do / don’t
 
 | Do | Don’t |
 |---|---|
 | Mount full `domains.txt` | Run prod egress on demo `keywords.txt` (startup guard aborts) |
-| Keep `certstream-data` + `novelty-data` volumes | Casual `down -v` |
+| Keep `certstream-data` volume + host `/var/lib/ct-firehose-filter` | Casual `down -v` (wipes CertStream indexes) |
 | Treat **alerts.jsonl** as the product | Persist raw MatchEvents to disk |
 | Use `EGRESS=novelty` | Use `EGRESS=stdout` in production (fills the disk) |
 | Flip `NOVELTY_REQUIRE_DB=1` after first healthy boot | Cold-start with `REQUIRE_DB=1` missing |
