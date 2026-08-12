@@ -2,18 +2,13 @@ mod common;
 
 use std::time::Duration;
 
-use aws_sdk_sqs::operation::send_message::SendMessageOutput;
-use aws_sdk_sqs::operation::send_message_batch::SendMessageBatchOutput;
-use aws_smithy_mocks::{mock, mock_client, RuleMode};
-use ct_firehose_filter::{
-    BatchConfig, Batcher, EgressSink, MatchEvent, RecordingSink, SqsSink, SQS_MAX_BATCH_BYTES,
-};
+use ct_firehose_filter::{BatchConfig, Batcher, MatchEvent, RecordingSink, BATCH_MAX_BYTES};
 use tokio::sync::mpsc;
 
 fn cfg(flush: Duration) -> BatchConfig {
     BatchConfig {
         max_messages: 10,
-        max_bytes: SQS_MAX_BATCH_BYTES,
+        max_bytes: BATCH_MAX_BYTES,
         flush_interval: flush,
     }
 }
@@ -40,11 +35,7 @@ async fn ten_matches_flush_as_exactly_one_batch_of_ten() {
         .expect("batcher should flush 10 messages");
 
     let batches = sink.batches().await;
-    assert_eq!(
-        batches.len(),
-        1,
-        "expected a single SendMessageBatch-sized flush"
-    );
+    assert_eq!(batches.len(), 1, "expected a single batch of ten");
     assert_eq!(batches[0].len(), 10);
 }
 
@@ -130,7 +121,7 @@ async fn oversize_pack_of_ten_is_split_rather_than_sent_as_one_oversize_batch() 
     let sink = RecordingSink::new();
     let tx = spawn_batcher(sink.clone(), Duration::from_secs(30)).await;
 
-    // 10 × ~40 KiB ≈ 400 KiB > 256 KiB SQS limit.
+    // 10 × ~40 KiB ≈ 400 KiB > 256 KiB batch byte cap.
     for i in 0..10 {
         tx.send(common::huge_event(&format!("big{i}"), 40 * 1024))
             .await
@@ -150,48 +141,11 @@ async fn oversize_pack_of_ten_is_split_rather_than_sent_as_one_oversize_batch() 
     for b in &batches {
         let bytes: usize = b.iter().map(|e| e.serialized_len().unwrap()).sum();
         assert!(
-            bytes <= SQS_MAX_BATCH_BYTES,
+            bytes <= BATCH_MAX_BYTES,
             "batch serialized to {bytes} bytes, over the 256 KiB cap"
         );
         assert!(b.len() <= 10);
         assert!(!b.is_empty());
     }
     assert_eq!(sink.total_events().await, 10);
-}
-
-#[tokio::test]
-async fn sqs_adapter_uses_send_message_batch_once_for_ten_events() {
-    let batch_rule = mock!(aws_sdk_sqs::Client::send_message_batch)
-        .match_requests(|req| req.entries().len() == 10)
-        .then_output(|| {
-            SendMessageBatchOutput::builder()
-                .set_successful(Some(Vec::new()))
-                .set_failed(Some(Vec::new()))
-                .build()
-                .expect("mock SendMessageBatchOutput")
-        });
-
-    // If the adapter mistakenly calls SendMessage per event, this rule fires and the test fails.
-    let single_rule = mock!(aws_sdk_sqs::Client::send_message).then_output(|| {
-        SendMessageOutput::builder()
-            .message_id("should-not-be-called")
-            .build()
-    });
-
-    let client = mock_client!(
-        aws_sdk_sqs,
-        RuleMode::MatchAny,
-        &[&batch_rule, &single_rule]
-    );
-    let sink = SqsSink::new(client, "https://sqs.us-east-1.amazonaws.com/123/test");
-
-    let events: Vec<MatchEvent> = (0..10).map(common::sample_event).collect();
-    sink.send_batch(&events).await.expect("batch send");
-
-    assert_eq!(batch_rule.num_calls(), 1, "exactly one SendMessageBatch");
-    assert_eq!(
-        single_rule.num_calls(),
-        0,
-        "must not fall back to per-message SendMessage"
-    );
 }

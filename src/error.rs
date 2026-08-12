@@ -14,10 +14,8 @@ pub enum ParseError {
 pub enum EgressError {
     #[error("egress sink rejected batch: {0}")]
     Sink(String),
-    #[error("serialized match event exceeds the 256 KiB SQS batch limit")]
+    #[error("serialized match event exceeds the batch size limit")]
     EventTooLarge,
-    #[error("SQS error: {0}")]
-    Sqs(String),
 }
 
 #[derive(Debug, Error)]
@@ -56,8 +54,6 @@ pub enum StartupError {
     Config(#[from] ConfigError),
     #[error("failed to load watchlist: {0}")]
     Watchlist(String),
-    #[error("AWS client init failed: {0}")]
-    Aws(String),
 }
 
 #[derive(Debug, Error)]

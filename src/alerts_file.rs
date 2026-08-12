@@ -1,21 +1,28 @@
-//! Append-only novelty alerts JSONL with size-based rotation (disk bound).
+//! Append-only novelty alerts JSONL with chunk rotate + total byte budget.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Default cap before rotating `alerts.jsonl` (~50 MiB).
-pub const DEFAULT_ALERTS_MAX_BYTES: u64 = 50 * 1024 * 1024;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
-/// How many rotated `alerts.jsonl.*` siblings to keep (oldest deleted).
-pub const DEFAULT_ALERTS_KEEP: usize = 3;
+/// Default chunk size before rotating live `alerts.jsonl` (256 MiB).
+pub const DEFAULT_ALERTS_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Default total budget for live + rotated (+ `.gz`) alert files (20 GiB).
+pub const DEFAULT_ALERTS_MAX_TOTAL_BYTES: u64 = 20 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct AlertsFileConfig {
     pub path: PathBuf,
+    /// Rotate live file when it reaches this size.
     pub max_bytes: u64,
-    pub keep: usize,
+    /// Delete oldest rotated siblings when live + archives exceed this.
+    pub max_total_bytes: u64,
+    /// Gzip sealed chunks after rotate (counts `.gz` toward the budget).
+    pub gzip_rotated: bool,
 }
 
 impl AlertsFileConfig {
@@ -24,40 +31,76 @@ impl AlertsFileConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_ALERTS_MAX_BYTES);
-        let keep = std::env::var("NOVELTY_ALERTS_KEEP")
+        let max_total_bytes = std::env::var("NOVELTY_ALERTS_MAX_TOTAL_BYTES")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(DEFAULT_ALERTS_KEEP);
+            .unwrap_or(DEFAULT_ALERTS_MAX_TOTAL_BYTES);
+        // Legacy NOVELTY_ALERTS_KEEP is ignored (budget-only retention).
+        let gzip_rotated = match std::env::var("NOVELTY_ALERTS_GZIP") {
+            Ok(raw) => {
+                let s = raw.trim().to_ascii_lowercase();
+                !(s == "0" || s == "false" || s == "no" || s == "off")
+            }
+            Err(_) => true,
+        };
         Self {
             path: path.into(),
             max_bytes: max_bytes.max(1024),
-            keep: keep.max(1),
+            max_total_bytes: max_total_bytes.max(1024),
+            gzip_rotated,
         }
     }
 }
 
-/// Rotate `path` → `path.<unix_nanos>` when size ≥ `max_bytes`, then prune old siblings.
-pub fn rotate_if_needed(path: &Path, max_bytes: u64, keep: usize) -> std::io::Result<()> {
-    if max_bytes == 0 || !path.exists() {
+/// Rotate `cfg.path` when oversized, optionally gzip the seal, then prune by total budget.
+pub fn rotate_if_needed(cfg: &AlertsFileConfig) -> std::io::Result<()> {
+    if cfg.max_bytes == 0 || !cfg.path.exists() {
         return Ok(());
     }
-    let len = fs::metadata(path)?.len();
-    if len < max_bytes {
+    let len = fs::metadata(&cfg.path)?.len();
+    if len < cfg.max_bytes {
         return Ok(());
     }
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let rotated = rotated_name(path, ts);
-    // Avoid clobbering if we rotate twice in the same nanosecond (tests).
-    let rotated = if rotated.exists() {
-        rotated_name(path, ts + 1)
-    } else {
-        rotated
-    };
-    fs::rename(path, &rotated)?;
-    prune_rotated(path, keep.max(1))?;
+    let mut rotated = rotated_name(&cfg.path, ts);
+    if rotated.exists() {
+        rotated = rotated_name(&cfg.path, ts + 1);
+    }
+    fs::rename(&cfg.path, &rotated)?;
+    if cfg.gzip_rotated {
+        if let Err(err) = gzip_seal(&rotated) {
+            tracing::warn!(
+                error = %err,
+                path = %rotated.display(),
+                "failed to gzip rotated alerts chunk; keeping uncompressed"
+            );
+        }
+    }
+    prune_to_budget(cfg)?;
+    Ok(())
+}
+
+fn gzip_seal(path: &Path) -> std::io::Result<()> {
+    let gz_path = PathBuf::from(format!("{}.gz", path.display()));
+    {
+        let input = File::open(path)?;
+        let mut reader = BufReader::new(input);
+        let output = File::create(&gz_path)?;
+        let mut encoder = GzEncoder::new(output, Compression::default());
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            encoder.write_all(&buf[..n])?;
+        }
+        encoder.finish()?;
+    }
+    fs::remove_file(path)?;
     Ok(())
 }
 
@@ -69,34 +112,82 @@ fn rotated_name(path: &Path, ts: u128) -> PathBuf {
     path.with_file_name(format!("{name}.{ts}"))
 }
 
-fn prune_rotated(path: &Path, keep: usize) -> std::io::Result<()> {
+fn is_rotated_sibling(prefix: &str, name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(prefix) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('.') else {
+        return false;
+    };
+    // alerts.jsonl.<digits> or alerts.jsonl.<digits>.gz
+    let stem = rest.strip_suffix(".gz").unwrap_or(rest);
+    !stem.is_empty() && stem.chars().all(|c| c.is_ascii_digit())
+}
+
+fn list_rotated(path: &Path) -> std::io::Result<Vec<PathBuf>> {
     let Some(parent) = path.parent() else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let Some(prefix) = path.file_name().and_then(|s| s.to_str()) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
-    let needle = format!("{prefix}.");
     let mut siblings: Vec<PathBuf> = fs::read_dir(parent)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
             p.file_name()
                 .and_then(|s| s.to_str())
-                .is_some_and(|n| n.starts_with(&needle) && n[needle.len()..].chars().all(|c| c.is_ascii_digit()))
+                .is_some_and(|n| is_rotated_sibling(prefix, n))
         })
         .collect();
-    siblings.sort();
-    while siblings.len() > keep {
+    // Lexicographic order matches numeric timestamp order for equal-width… nanos vary in
+    // length; sort by the numeric stem extracted from the name.
+    siblings.sort_by_key(|p| rotated_sort_key(p));
+    Ok(siblings)
+}
+
+fn rotated_sort_key(path: &Path) -> u128 {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let after_dot = name.rsplit_once('.').map(|(_, r)| r).unwrap_or("");
+    let stem = if after_dot == "gz" {
+        name.trim_end_matches(".gz")
+            .rsplit_once('.')
+            .map(|(_, r)| r)
+            .unwrap_or("")
+    } else {
+        after_dot
+    };
+    stem.parse().unwrap_or(0)
+}
+
+fn total_alerts_bytes(cfg: &AlertsFileConfig) -> std::io::Result<u64> {
+    let mut total = 0u64;
+    if cfg.path.exists() {
+        total = total.saturating_add(fs::metadata(&cfg.path)?.len());
+    }
+    for p in list_rotated(&cfg.path)? {
+        total = total.saturating_add(fs::metadata(&p)?.len());
+    }
+    Ok(total)
+}
+
+/// Delete oldest rotated files until live + archives fit under `max_total_bytes`.
+pub fn prune_to_budget(cfg: &AlertsFileConfig) -> std::io::Result<()> {
+    let mut siblings = list_rotated(&cfg.path)?;
+    loop {
+        let total = total_alerts_bytes(cfg)?;
+        if total <= cfg.max_total_bytes || siblings.is_empty() {
+            break;
+        }
         let old = siblings.remove(0);
-        let _ = fs::remove_file(old);
+        let _ = fs::remove_file(&old);
     }
     Ok(())
 }
 
 /// Open alerts file for append after optional rotation.
 pub fn open_append(cfg: &AlertsFileConfig) -> std::io::Result<BufWriter<File>> {
-    rotate_if_needed(&cfg.path, cfg.max_bytes, cfg.keep)?;
+    rotate_if_needed(cfg)?;
     let f = OpenOptions::new()
         .create(true)
         .append(true)
@@ -113,12 +204,10 @@ pub fn write_line(
     writer.write_all(line)?;
     writer.write_all(b"\n")?;
     writer.flush()?;
-    // Cheap size check via metadata (rotation is rare).
     if let Ok(meta) = fs::metadata(&cfg.path) {
         if meta.len() >= cfg.max_bytes {
             writer.flush()?;
-            // Drop handle before rename on some FS; reopen after.
-            rotate_if_needed(&cfg.path, cfg.max_bytes, cfg.keep)?;
+            rotate_if_needed(cfg)?;
             *writer = open_append(cfg)?;
         }
     }
@@ -129,53 +218,89 @@ pub fn write_line(
 mod tests {
     use super::*;
     use std::io::Write;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn rotates_and_prunes() {
+    fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "ct-alerts-rot-{}",
+            "ct-alerts-{tag}-{}",
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
         fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("alerts.jsonl");
-        {
-            let mut f = File::create(&path).unwrap();
-            f.write_all(&vec![b'x'; 100]).unwrap();
-        }
-        rotate_if_needed(&path, 50, 2).unwrap();
-        assert!(!path.exists());
-        let rotated: Vec<_> = fs::read_dir(&dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .collect();
-        assert_eq!(rotated.len(), 1);
+        dir
+    }
 
-        // Create two more rotations worth of files and prune to keep=2.
-        for i in 0..3 {
-            let p = dir.join(format!("alerts.jsonl.{}", 1_700_000_000 + i));
-            File::create(&p).unwrap();
-        }
-        // Touch live empty then rotate again from a fat file.
+    #[test]
+    fn rotates_gzips_and_prunes_by_budget() {
+        let dir = temp_dir("budget");
+        let path = dir.join("alerts.jsonl");
+        let cfg = AlertsFileConfig {
+            path: path.clone(),
+            max_bytes: 50,
+            max_total_bytes: 120,
+            gzip_rotated: true,
+        };
+
         {
             let mut f = File::create(&path).unwrap();
-            f.write_all(&vec![b'y'; 100]).unwrap();
+            f.write_all(&[b'x'; 100]).unwrap();
         }
-        rotate_if_needed(&path, 50, 2).unwrap();
-        let count = fs::read_dir(&dir)
+        rotate_if_needed(&cfg).unwrap();
+        assert!(!path.exists());
+        let gz_count = fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| {
                 e.file_name()
                     .to_str()
-                    .is_some_and(|n| n.starts_with("alerts.jsonl."))
+                    .is_some_and(|n| n.starts_with("alerts.jsonl.") && n.ends_with(".gz"))
             })
             .count();
-        assert!(count <= 2, "expected ≤2 rotated files, got {count}");
+        assert_eq!(gz_count, 1);
+
+        // Force more chunks until budget deletes the oldest.
+        for i in 0..5 {
+            let mut f = File::create(&path).unwrap();
+            f.write_all(&[b'y'.wrapping_add(u8::try_from(i).unwrap_or(0)); 100])
+                .unwrap();
+            drop(f);
+            rotate_if_needed(&cfg).unwrap();
+        }
+        let total = total_alerts_bytes(&cfg).unwrap();
+        assert!(
+            total <= cfg.max_total_bytes,
+            "total {total} exceeds budget {}",
+            cfg.max_total_bytes
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotate_without_gzip_keeps_plain_sibling() {
+        let dir = temp_dir("plain");
+        let path = dir.join("alerts.jsonl");
+        let cfg = AlertsFileConfig {
+            path: path.clone(),
+            max_bytes: 50,
+            max_total_bytes: 10_000,
+            gzip_rotated: false,
+        };
+        {
+            let mut f = File::create(&path).unwrap();
+            f.write_all(&[b'z'; 100]).unwrap();
+        }
+        rotate_if_needed(&cfg).unwrap();
+        let plain = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let n = e.file_name();
+                let s = n.to_str().unwrap_or("");
+                s.starts_with("alerts.jsonl.") && !s.ends_with(".gz")
+            })
+            .count();
+        assert_eq!(plain, 1);
         let _ = fs::remove_dir_all(&dir);
     }
 }

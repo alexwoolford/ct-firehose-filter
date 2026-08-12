@@ -10,11 +10,11 @@ use crate::error::{BatchError, EgressError};
 use crate::event::MatchEvent;
 use crate::metrics::PipelineMetrics;
 
-/// SQS `SendMessageBatch` hard limit (payload + envelope).
-pub const SQS_MAX_BATCH_BYTES: usize = 256 * 1024;
+/// Soft batch payload cap (bytes) before flush.
+pub const BATCH_MAX_BYTES: usize = 256 * 1024;
 
-/// Maximum number of entries in a single SQS `SendMessageBatch` call.
-pub const SQS_MAX_BATCH_MESSAGES: usize = 10;
+/// Maximum number of match events in one egress batch.
+pub const BATCH_MAX_MESSAGES: usize = 10;
 
 #[derive(Clone, Debug)]
 pub struct BatchConfig {
@@ -26,8 +26,8 @@ pub struct BatchConfig {
 impl Default for BatchConfig {
     fn default() -> Self {
         Self {
-            max_messages: SQS_MAX_BATCH_MESSAGES,
-            max_bytes: SQS_MAX_BATCH_BYTES,
+            max_messages: BATCH_MAX_MESSAGES,
+            max_bytes: BATCH_MAX_BYTES,
             flush_interval: Duration::from_secs(5),
         }
     }
@@ -193,7 +193,7 @@ impl<S: EgressSink> Batcher<S> {
                 }
                 Err(err) => {
                     if let Some(m) = &self.metrics {
-                        m.sqs_retries.fetch_add(1, Ordering::Relaxed);
+                        m.egress_retries.fetch_add(1, Ordering::Relaxed);
                     }
                     tracing::warn!(error = %err, "egress batch failed; retrying");
                     tokio::time::sleep(delay).await;

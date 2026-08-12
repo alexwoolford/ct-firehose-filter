@@ -1,18 +1,8 @@
-# Local/dev stack: CertStream fan-in + edge filter with stdout egress (no SQS).
+# Local/dev stack: CertStream fan-in + edge filter with stdout egress.
 #
-# First boot automatically seeds CT indexes (certstream-init). Prefer:
-#   docker compose up --build
-#
-# Do NOT casually wipe the data volume — `docker compose down -v` forces a fresh
-# index seed and any gap during downtime is skipped (live tip only).
-#
-# Filter-only against an already-running sidecar:
-#   CERTSTREAM_URL=ws://127.0.0.1:8080/ EGRESS=stdout cargo run --release
-#
-# Production SQS overlay (quiet filter + log rotation inherited):
+# Production novelty overlay (Oracle Always Free, EGRESS=novelty):
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up --build -d
 # See docs/DEPLOY.md.
-# x-logging: certstream-server-go has no quiet mode; rotate container logs or disk fills.
 
 x-logging: &default-logging
   driver: json-file

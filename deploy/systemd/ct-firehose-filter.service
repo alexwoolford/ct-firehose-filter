@@ -1,5 +1,5 @@
 [Unit]
-Description=CT firehose edge filter (CertStream → watchlist → SQS)
+Description=CT firehose edge filter (CertStream → watchlist → in-process A′ novelty)
 Documentation=https://github.com/alexwoolford/ct-firehose-filter
 After=network-online.target certstream-server-go.service
 Requires=certstream-server-go.service
@@ -13,7 +13,7 @@ WorkingDirectory=/var/lib/ct-firehose-filter
 EnvironmentFile=-/etc/ct-firehose-filter/env
 # Prefer the local sidecar lite stream; Calidog is best-effort only.
 Environment=CERTSTREAM_URL=ws://127.0.0.1:8080/
-Environment=EGRESS=sqs
+Environment=EGRESS=novelty
 Environment=RUST_LOG=warn
 ExecStart=/usr/local/bin/ct-firehose-filter
 Restart=on-failure

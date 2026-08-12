@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Quiet smoke: REQUIRE_DB 0→1, optional Compose+throwaway SQS.
+# Quiet smoke: REQUIRE_DB 0→1, optional Compose with EGRESS=novelty (Oracle only).
 # Usage:
 #   deploy/scripts/preflight-smoke.sh              # offline novelty + config checks
 #   deploy/scripts/preflight-smoke.sh --compose    # also bring up prod overlay briefly
@@ -71,10 +71,11 @@ if [[ "${WARM_A:-1}" != "0" ]]; then
 fi
 
 # Prod overlay hard no-gos
-grep -q 'EGRESS: sqs' docker-compose.prod.yml
+grep -q 'EGRESS: novelty' docker-compose.prod.yml
 grep -q 'max-size: "10m"' docker-compose.prod.yml
 grep -q 'NOVELTY_TIERS: A' docker-compose.prod.yml
-echo "ok: prod compose quiet defaults present"
+grep -q 'NOVELTY_ALERTS_MAX_TOTAL_BYTES' docker-compose.prod.yml
+echo "ok: prod compose quiet novelty defaults present"
 
 if [[ $COMPOSE -eq 1 && ( -z "$WATCHLIST" || ! -f "$WATCHLIST" ) ]]; then
   echo "ERROR: set WATCHLIST_HOST_PATH to your full domains.txt for --compose" >&2
@@ -83,17 +84,10 @@ fi
 if [[ -n "$WATCHLIST" && ! -f "$WATCHLIST" ]]; then
   echo "WARN: watchlist missing at $WATCHLIST" >&2
 elif [[ $COMPOSE -eq 1 ]]; then
-  echo "== preflight smoke: compose + throwaway SQS =="
-  REGION="${AWS_REGION:-us-west-2}"
-  SUFFIX="$(date +%s)"
-  MATCH_Q="ct-preflight-matches-$SUFFIX"
-  MATCH_URL=$(aws sqs create-queue --queue-name "$MATCH_Q" --region "$REGION" \
-    --query QueueUrl --output text)
-  echo "created $MATCH_URL"
+  echo "== preflight smoke: compose EGRESS=novelty (Oracle only) =="
   STATUS=0
   cleanup() {
     local ec=$?
-    aws sqs delete-queue --queue-url "$MATCH_URL" --region "$REGION" >/dev/null 2>&1 || true
     docker compose -f docker-compose.yml -f docker-compose.prod.yml \
       --env-file "$WORKDIR/env.prod" down >/dev/null 2>&1 || true
     exit "${STATUS:-$ec}"
@@ -101,41 +95,21 @@ elif [[ $COMPOSE -eq 1 ]]; then
   trap cleanup EXIT
 
   cat >"$WORKDIR/env.prod" <<EOF
-SQS_QUEUE_URL=$MATCH_URL
-AWS_REGION=$REGION
 WATCHLIST_HOST_PATH=$WATCHLIST
 NOVELTY_REQUIRE_DB=0
 NOVELTY_MAX_COALITION=5
-NOVELTY_ALERTS_MAX_BYTES=52428800
-NOVELTY_ALERTS_KEEP=3
+NOVELTY_ALERTS_MAX_BYTES=268435456
+NOVELTY_ALERTS_MAX_TOTAL_BYTES=21474836480
+NOVELTY_ALERTS_GZIP=1
 EOF
-  # Pass host AWS creds into containers (instance-role path is Oracle-only).
-  if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
-    {
-      echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID"
-      echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY"
-      [[ -n "${AWS_SESSION_TOKEN:-}" ]] && echo "AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN"
-    } >>"$WORKDIR/env.prod"
-  elif command -v aws >/dev/null 2>&1; then
-    if creds=$(aws configure export-credentials --format env 2>/dev/null); then
-      # shellcheck disable=SC2086
-      eval "$creds"
-      {
-        echo "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID"
-        echo "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY"
-        [[ -n "${AWS_SESSION_TOKEN:-}" ]] && echo "AWS_SESSION_TOKEN=$AWS_SESSION_TOKEN"
-      } >>"$WORKDIR/env.prod"
-    fi
-  fi
 
   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
     --env-file "$WORKDIR/env.prod" up --build -d
 
-  echo "waiting for filter+novelty healthy..."
+  echo "waiting for filter healthy..."
   sleep 45
   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
     --env-file "$WORKDIR/env.prod" ps
-  # Filter at warn should not spam match JSON; novelty should start.
   FILTER_LOG=$(docker logs ct-firehose-filter 2>&1 | tail -n 80 || true)
   if echo "$FILTER_LOG" | grep -E '"matched_domains"|EGRESS=stdout' >/dev/null; then
     echo "FAIL: filter looks chatty / stdout-like" >&2
@@ -143,22 +117,21 @@ EOF
     STATUS=1
     exit 1
   fi
-  NOV_LOG=$(docker logs ct-novelty-consumer 2>&1 | tail -n 80 || true)
-  echo "$NOV_LOG" | grep -q "starting ct-novelty-consumer" || {
-    echo "FAIL: novelty did not start"
-    echo "$NOV_LOG" >&2
+  echo "$FILTER_LOG" | grep -q "EGRESS=novelty" || {
+    echo "FAIL: expected EGRESS=novelty startup log"
+    echo "$FILTER_LOG" >&2
     STATUS=1
     exit 1
   }
 
-  # Flip REQUIRE_DB=1 and recreate novelty (DB now exists on volume)
+  # Flip REQUIRE_DB=1 and recreate filter (DB now exists on volume)
   sed -i.bak 's/NOVELTY_REQUIRE_DB=0/NOVELTY_REQUIRE_DB=1/' "$WORKDIR/env.prod"
   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-    --env-file "$WORKDIR/env.prod" up -d novelty
+    --env-file "$WORKDIR/env.prod" up -d filter
   sleep 10
-  if ! docker logs ct-novelty-consumer 2>&1 | tail -n 40 | grep -q "starting ct-novelty-consumer"; then
-    echo "FAIL: novelty did not restart with REQUIRE_DB=1" >&2
-    docker logs ct-novelty-consumer 2>&1 | tail -n 40 >&2
+  if ! docker logs ct-firehose-filter 2>&1 | tail -n 40 | grep -q "EGRESS=novelty"; then
+    echo "FAIL: filter did not restart with REQUIRE_DB=1" >&2
+    docker logs ct-firehose-filter 2>&1 | tail -n 40 >&2
     STATUS=1
     exit 1
   fi

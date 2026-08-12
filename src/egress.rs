@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, Notify};
 use crate::error::EgressError;
 use crate::event::MatchEvent;
 
-/// Cloud-agnostic batch egress. SQS, Pub/Sub, Service Bus, or HTTP trickle.
+/// Batched match egress (stdout, in-process novelty, or future sinks).
 #[async_trait]
 pub trait EgressSink: Send + Sync {
     async fn send_batch(&self, items: &[MatchEvent]) -> Result<(), EgressError>;
@@ -66,59 +66,6 @@ impl EgressSink for RecordingSink {
         }
         self.batches.lock().await.push(items.to_vec());
         self.notify.notify_waiters();
-        Ok(())
-    }
-}
-
-/// Thin wrapper around the AWS SQS client. Always uses `SendMessageBatch`.
-pub struct SqsSink {
-    client: aws_sdk_sqs::Client,
-    queue_url: String,
-}
-
-impl SqsSink {
-    pub fn new(client: aws_sdk_sqs::Client, queue_url: impl Into<String>) -> Self {
-        Self {
-            client,
-            queue_url: queue_url.into(),
-        }
-    }
-}
-
-#[async_trait]
-impl EgressSink for SqsSink {
-    async fn send_batch(&self, items: &[MatchEvent]) -> Result<(), EgressError> {
-        if items.is_empty() {
-            return Err(EgressError::Sink("empty batch must never be sent".into()));
-        }
-
-        let mut entries = Vec::with_capacity(items.len());
-        for (idx, item) in items.iter().enumerate() {
-            let body = serde_json::to_string(item).map_err(|e| EgressError::Sink(e.to_string()))?;
-            let entry = aws_sdk_sqs::types::SendMessageBatchRequestEntry::builder()
-                .id(idx.to_string())
-                .message_body(body)
-                .build()
-                .map_err(|e| EgressError::Sqs(e.to_string()))?;
-            entries.push(entry);
-        }
-
-        let output = self
-            .client
-            .send_message_batch()
-            .queue_url(&self.queue_url)
-            .set_entries(Some(entries))
-            .send()
-            .await
-            .map_err(|e| EgressError::Sqs(e.to_string()))?;
-
-        if !output.failed().is_empty() {
-            return Err(EgressError::Sqs(format!(
-                "{} of {} SQS batch entries failed",
-                output.failed().len(),
-                items.len()
-            )));
-        }
         Ok(())
     }
 }

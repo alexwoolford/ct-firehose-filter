@@ -5,7 +5,7 @@
 # BEFORE first boot. Without it, dnf/docker.com fail (DNS timeouts) and this
 # script cannot install packages. See docs/DEPLOY.md.
 #
-# Do NOT put AWS keys, SQS URLs, or .env.prod here.
+# Do NOT put secrets or .env.prod here.
 
 package_update: false
 package_upgrade: false
@@ -26,8 +26,8 @@ write_files:
         cd ct-firehose-filter
         cp .env.prod.example .env.prod
         chmod 600 .env.prod
-        # Edit: SQS_QUEUE_URL, AWS_*, WATCHLIST_HOST_PATH=/var/lib/ct-firehose-filter/domains.txt
-        # Copy full domains.txt to that path (never keywords.txt for SQS; never put secrets in cloud-init).
+        # Edit: WATCHLIST_HOST_PATH=/var/lib/ct-firehose-filter/domains.txt, NOVELTY_REQUIRE_DB
+        # Copy full domains.txt to that path (never keywords.txt; never put secrets in cloud-init).
         docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up --build -d
 
       Durable novelty path: /var/lib/ct-firehose-filter/ (never /tmp).

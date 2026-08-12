@@ -3,7 +3,8 @@ use std::time::Instant;
 
 use ct_firehose_filter::{
     load_domain_file, load_suppress_and_glue, run_pipeline_with_metrics, Config, DomainWatchlist,
-    EgressBackend, HotWatchlist, PipelineMetrics, SqsSink, StartupError, StdoutSink,
+    EgressBackend, HotWatchlist, NoveltyPolicy, NoveltySink, PipelineMetrics, StartupError,
+    StdoutSink,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -20,6 +21,16 @@ fn build_watchlist(
     let suppress = load_suppress_and_glue(suppress_path, glue_path)
         .map_err(|e| StartupError::Watchlist(e.to_string()))?;
     Ok(DomainWatchlist::new_with_suppress(&names, &suppress))
+}
+
+fn env_flag(key: &str, default: bool) -> bool {
+    match std::env::var(key) {
+        Ok(raw) => {
+            let s = raw.trim().to_ascii_lowercase();
+            !(s.is_empty() || s == "0" || s == "false" || s == "no" || s == "off")
+        }
+        Err(_) => default,
+    }
 }
 
 #[tokio::main]
@@ -51,11 +62,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if watchlist.is_empty() {
         tracing::warn!("watchlist is empty; every certificate will be dropped");
     }
-    if config.egress == EgressBackend::Sqs && watchlist.len() < config.watchlist_min_len {
+    if config.egress.is_prod() && watchlist.len() < config.watchlist_min_len {
         return Err(StartupError::Watchlist(format!(
-            "EGRESS=sqs requires watchlist len >= {} (got {}); mount full domains.txt via \
+            "EGRESS={:?} requires watchlist len >= {} (got {}); mount full domains.txt via \
              WATCHLIST_FILE / WATCHLIST_HOST_PATH — demo keywords.txt is not production. \
              Set WATCHLIST_MIN_LEN=0 only for deliberate tiny-list smoke tests.",
+            config.egress,
             config.watchlist_min_len,
             watchlist.len()
         ))
@@ -129,13 +141,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
         }
-        EgressBackend::Sqs => {
-            let queue_url = config.sqs_queue_url.clone().ok_or(StartupError::Config(
-                ct_firehose_filter::ConfigError::MissingRequired("SQS_QUEUE_URL"),
-            ))?;
-            let aws = aws_config::load_from_env().await;
-            let client = aws_sdk_sqs::Client::new(&aws);
-            let sink = SqsSink::new(client, queue_url);
+        EgressBackend::Novelty => {
+            let mut policy =
+                NoveltyPolicy::from_tiers(std::env::var("NOVELTY_TIERS").ok().as_deref());
+            policy.skip_routine = env_flag("NOVELTY_SKIP_ROUTINE", true);
+            let sink = NoveltySink::open(
+                &config.novelty_db,
+                &config.novelty_alerts,
+                &config.suppress_file,
+                &config.glue_file,
+                policy,
+                config.novelty_require_db,
+            )?;
+            tracing::warn!(
+                db = %config.novelty_db.display(),
+                alerts = %config.novelty_alerts.display(),
+                "EGRESS=novelty — A′ alerts to local rotated JSONL"
+            );
             run_pipeline_with_metrics(
                 config.certstream_url,
                 watchlist,

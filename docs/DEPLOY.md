@@ -1,6 +1,6 @@
 # Remote deploy (Compose-first)
 
-Default remote path: **Docker Compose** on Oracle Always Free (Phoenix) → AWS SQS **`us-west-2`**, plus the **novelty A′ consumer** for a reviewable product trickle.
+Default remote path: **Docker Compose** on Oracle Always Free (Phoenix) with **`EGRESS=novelty`** (in-process A′ → local `novelty.db` + rotated `alerts.jsonl`). Hot-path cost ≈ $0.
 
 Runtime ranking: **Compose (default) → systemd (advanced / no Docker) → not Kubernetes** on a single Always Free VM.
 
@@ -8,29 +8,29 @@ Runtime ranking: **Compose (default) → systemd (advanced / no Docker) → not 
 
 | Bar | Required for? | Meaning |
 |---|---|---|
-| **Edge engineering** | Internal go-live | CertStream + full watchlist + quiet `EGRESS=sqs` |
-| **Product feed (internal)** | Analyst trickle | Continuous **A′ novelty** with `NOVELTY_MAX_COALITION=5` |
+| **Edge engineering** | Internal go-live | CertStream + full watchlist + quiet `EGRESS=novelty` |
+| **Product feed (internal)** | Analyst trickle | Continuous **A′ novelty** with `NOVELTY_MAX_COALITION=5` → `alerts.jsonl` |
 | **Decision-grade diligence** | PE / corp-dev research | Warm DB + labeled precision + **known-ownership surprise filter** + case studies — see [`SIGNAL.md`](SIGNAL.md#why-this-signal-matters-pe--corp-dev-diligence) |
 
-Edge→SQS alone is an engineering milestone. **Internal product** = edge + size-capped A′. **Decision-grade** needs the bar in SIGNAL (not met yet). This repo is a **mosaic tile**: useful publicly as architecture + Neo4j demo material; production `domains.txt` and credentials stay operator-private.
+Product output stays on the VM (`novelty.db` + `alerts.jsonl`). Off-box streaming of A′ alerts is out of scope for now.
 
 ## Pass / fail gates
 
 | Gate | Pass when | Doc |
 |---|---|---|
 | Scale | Filter RSS/throughput fit Always Free | [`SCALE.md`](SCALE.md) — **GO** (~100 MiB, ~1M inspect/s) |
-| Full watchlist | `WATCHLIST_HOST_PATH` → `domains.txt`; `EGRESS=sqs` refuses len &lt; 100k (`WATCHLIST_MIN_LEN`) | this doc |
+| Full watchlist | `WATCHLIST_HOST_PATH` → `domains.txt`; prod `EGRESS` refuses len &lt; 100k (`WATCHLIST_MIN_LEN`) | this doc |
 | Glue + size cap | [`glue.txt`](../glue.txt) reviewed; A′ drops coalitions size ≥6 | [`SIGNAL.md`](SIGNAL.md#precision-audit-screened-in-vs-screened-out) |
 | Quiet ops | Log rotation + `RUST_LOG=warn` + never `EGRESS=stdout` | [`CERTSTREAM.md`](CERTSTREAM.md#quiet-production-checklist) |
-| Novelty A′ | `ct-novelty-consumer` + durable `NOVELTY_DB` (+ S3 snapshot) | [`SIGNAL.md`](SIGNAL.md) |
+| Novelty A′ | `EGRESS=novelty` + durable `NOVELTY_DB` + budget-capped `alerts.jsonl` | [`SIGNAL.md`](SIGNAL.md) |
 | Decision-grade | Warm ≥7d, precision ≥70%, ownership surprise filter | [`SIGNAL.md`](SIGNAL.md#why-this-signal-matters-pe--corp-dev-diligence) — **not yet** |
 
 ## Prerequisites
 
-1. Two SQS queues in **`us-west-2`** (or one raw + file-only alerts): `ct-matches` (edge write / novelty read), optional `ct-alerts` (A′ only).
-2. IAM: edge needs `sqs:SendMessage` / `SendMessageBatch` on matches; novelty needs receive/delete on matches and optional send on alerts.
-3. Host: Docker + Compose; ~0.1 GiB filter + ~0.5–2 GiB CertStream + small novelty SQLite.
-4. Full `domains.txt` on the host — **never** demo [`keywords.txt`](../keywords.txt). **Never commit** `domains.txt` or `.env.prod`.
+1. Host: Docker + Compose; ~0.1 GiB filter + ~0.5–2 GiB CertStream + small novelty SQLite.
+2. Full `domains.txt` on the host — **never** demo [`keywords.txt`](../keywords.txt). **Never commit** `domains.txt` or `.env.prod`.
+3. Durable volume for `/var/lib/ct-firehose-filter` (`novelty.db` + alerts). Alert budget defaults: 256 MiB chunks, **20 GiB** total, gzip on.
+4. Oracle Always Free only for shoestring go-live — no external queue or object-storage account.
 
 ## Validate cloud-init before spending compute
 
@@ -71,14 +71,14 @@ Target: **Always Free Ampere** in **`us-phoenix-1`** (Phoenix).
 | Boot volume | Largest Always Free-eligible size (~200 GB if available) | Headroom for Docker layers; novelty DB stays small. |
 | IMDSv2 “Require authorization header” | **ON** | Leave on. |
 | Confidential computing | Off | Not needed. |
-| Public IP | Yes | SSH + outbound CT + SQS `us-west-2`. |
+| Public IP | Yes | SSH + outbound CT. |
 | NSG / security list | **SSH 22** from your IP only | Do **not** open **8080** publicly (CertStream stays on Docker network). |
 | SSH key | Your key | No password auth. |
 | Cloud-init | Upload [`deploy/oci/cloud-init.yaml`](../deploy/oci/cloud-init.yaml) | Bootstrap only — **no secrets**. |
 
 On **Advanced options → Management → Initialization script**, choose **Choose cloud-init script file** and upload [`deploy/oci/cloud-init.yaml`](../deploy/oci/cloud-init.yaml) (or paste its contents). That installs Docker + Compose, creates `/var/lib/ct-firehose-filter`, and adds `opc` to the `docker` group. It does **not** start the filter (clone + `.env.prod` happen after SSH).
 
-**Do not** paste AWS keys, `SQS_QUEUE_URL`, or `.env.prod` into cloud-init (they persist in instance metadata history). Put credentials only on the instance filesystem (`chmod 600 .env.prod`).
+**Do not** paste secrets or `.env.prod` into cloud-init (they persist in instance metadata history). Put any credentials only on the instance filesystem (`chmod 600 .env.prod`).
 
 **Networking before first boot:** the VCN needs an **Internet Gateway** and default route `0.0.0.0/0 → IGW` **before** the instance boots. Without it, cloud-init cannot reach `yum.oracle.com` / `download.docker.com` (git/Docker stay missing). If you created the VCN manually without the “Internet Connectivity” wizard, add the IGW + route first (or use [`deploy/oci/ensure-igw.sh`](../deploy/oci/ensure-igw.sh)).
 
@@ -120,17 +120,24 @@ Then continue with the operator checklist below (clone, watchlist, `.env.prod`, 
 
 ## Pre-flight before Oracle (disk / crash)
 
-Do **not** cut over cold. Run locally first:
+Do **not** cut over cold. Run locally first.
+
+**0) MatchEvent dump** (required before offline scripts; default path `/tmp/ct-ma-eval.jsonl`):
 
 ```bash
-# MatchEvent dump for offline drills (operator path):
-#   PREFLIGHT_JSONL=/tmp/ct-ma-eval.jsonl
-# Full watchlist for --compose:
-#   export WATCHLIST_HOST_PATH=/path/to/domains.txt
+docker compose up -d certstream
+# Wait until ws://127.0.0.1:8080/ serves, then capture a tip window (900s ≈ 15m):
+CERTSTREAM_URL=ws://127.0.0.1:8080/ cargo run --release --example live_smoke -- \
+  /path/to/domains.txt 900 suppress.txt /tmp/ct-ma-eval.jsonl
+export WATCHLIST_HOST_PATH=/path/to/domains.txt   # full list ≥100k for --compose
+```
 
+Then:
+
+```bash
 # 1) Quiet smoke (REQUIRE_DB 0→1, A′-only hosts=0)
 deploy/scripts/preflight-smoke.sh
-# Optional live Compose + throwaway SQS (needs Docker + AWS + full domains.txt):
+# Optional live Compose with EGRESS=novelty (needs Docker + full domains.txt):
 deploy/scripts/preflight-smoke.sh --compose
 
 # 2) Disk growth (compressed = minutes; proves cold jump then warm flat + alerts rotate)
@@ -138,17 +145,13 @@ deploy/scripts/preflight-soak.sh --compressed
 # Optional multi-hour sampler while stack is up:
 # deploy/scripts/preflight-soak.sh --live --hours 4 --interval 300
 
-# 3) Wipe / restore drill (no cold flood after snapshot restore)
+# 3) Wipe / restore drill (no cold flood after local snapshot restore)
 deploy/scripts/preflight-failure-drill.sh
-# Optional real S3:
-# deploy/scripts/preflight-failure-drill.sh --s3 s3://your-bucket/ct-preflight/novelty.db
 ```
 
-**Disk bounds baked in:** `EGRESS=sqs` + Docker log `10m`×3; A′-only skips `hosts` table growth; `NOVELTY_ALERTS_MAX_BYTES` (default 50MiB) rotates `alerts.jsonl` (keep `NOVELTY_ALERTS_KEEP`); host [`deploy/logrotate/ct-novelty-alerts`](../deploy/logrotate/ct-novelty-alerts) as backup.
+**Disk bounds baked in:** `EGRESS=novelty` + Docker log `10m`×3; A′-only skips `hosts` table growth; `NOVELTY_ALERTS_MAX_BYTES` (256 MiB chunks) + `NOVELTY_ALERTS_MAX_TOTAL_BYTES` (20 GiB) prune oldest; gzip sealed chunks by default.
 
-**Measured (compressed soak on a 15m tip dump):** cold `novelty.db` ≈ **216 KiB** (1,117 coalitions, **0 hosts**); cold `alerts.jsonl` ≈ **548 KiB** (887 A′); warm re-pass **0** new alerts / flat DB; with a 4 KiB rotate cap, retained alert files stay under **64 KiB** (KEEP=2). Full multi-hour live sampler: `preflight-soak.sh --live --hours 4`.
-
-**Local Docker note:** if containers log SQS `dispatch failure`, the host cannot reach AWS from the container network — fix creds/network or run the same compose on the Oracle VM (instance role). Offline smoke/soak/failure-drill do not need SQS.
+**Measured (compressed soak on a 15m tip dump):** cold `novelty.db` ≈ **216 KiB** (1,117 coalitions, **0 hosts**); cold `alerts.jsonl` ≈ **548 KiB** (887 A′); warm re-pass **0** new alerts / flat DB. Full multi-hour live sampler: `preflight-soak.sh --live --hours 4`.
 
 ## Operator checklist (product go-live)
 
@@ -165,33 +168,30 @@ cp .env.prod.example .env.prod
 chmod 600 .env.prod
 # REQUIRED: WATCHLIST_HOST_PATH=/var/lib/ct-firehose-filter/domains.txt
 #   (scp your full domains.txt there first — never keywords.txt; never commit domains.txt)
-# REQUIRED: SQS_QUEUE_URL=...
-# REQUIRED: AWS credentials (env in .env.prod, or shared creds file mounted carefully)
-# First novelty boot: NOVELTY_REQUIRE_DB=0  (or restore novelty.db from S3 first, then =1)
-# Optional: NOVELTY_ALERTS_QUEUE_URL=...
+# First boot: NOVELTY_REQUIRE_DB=0
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up --build -d
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=50 filter novelty
-# Filter quiet at warn; novelty logs A′ coalitions; SQS console shows traffic
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=50 filter
+# Filter quiet at warn; A′ lines append to alerts.jsonl on the novelty-data volume
 ```
 
-After the novelty volume exists and looks healthy, set `NOVELTY_REQUIRE_DB=1` in `.env.prod` and recreate the novelty service so wipes fail closed. Enable S3 snapshot timer ([`deploy/scripts/novelty-s3-snapshot.sh`](../deploy/scripts/novelty-s3-snapshot.sh)).
+After the novelty volume exists and looks healthy, set `NOVELTY_REQUIRE_DB=1` in `.env.prod` and recreate the filter so wipes fail closed. Backup `novelty.db` with a local file copy or `sqlite3 … '.backup …'` (see [`SIGNAL.md`](SIGNAL.md#shoestring-persistence-survive-restarts)).
 
 ### Do / don’t
 
 | Do | Don’t |
 |---|---|
-| Mount full `domains.txt` | Run SQS egress on demo `keywords.txt` (startup guard aborts) |
+| Mount full `domains.txt` | Run prod egress on demo `keywords.txt` (startup guard aborts) |
 | Keep `certstream-data` + `novelty-data` volumes | Casual `down -v` |
-| Treat **alerts.jsonl** / alerts queue as the product | Read raw match queue as human feed |
-| Restore novelty DB from S3 after disk wipe | Cold-start with `REQUIRE_DB=1` missing |
-| Keep AWS keys only in `0600` `.env.prod` on the host | Put secrets in cloud-init / git / screenshots |
+| Treat **alerts.jsonl** as the product | Persist raw MatchEvents to disk |
+| Use `EGRESS=novelty` | Use `EGRESS=stdout` in production (fills the disk) |
+| Flip `NOVELTY_REQUIRE_DB=1` after first healthy boot | Cold-start with `REQUIRE_DB=1` missing |
 
 ## Advanced: systemd (no Docker)
 
-Units under [`deploy/systemd/`](../deploy/systemd/): `certstream-server-go`, `ct-firehose-filter`, **`ct-novelty-consumer`** (continuous), plus snapshot timer. Prefer Compose when Docker is allowed.
+Units under [`deploy/systemd/`](../deploy/systemd/): `certstream-server-go`, `ct-firehose-filter` (`EGRESS=novelty`). Prefer Compose when Docker is allowed.
 
 Offline JSONL proof: `novelty_replay` example / `ct-novelty-replay.service`.
 

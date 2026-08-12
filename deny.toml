@@ -4,14 +4,6 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-# Transitive aws-smithy-http-client → rustls 0.21 → rustls-webpki 0.101.7 (SDK pinned for rustc 1.91).
-# CertStream ingress uses rustls-webpki ≥0.103 via tokio-tungstenite. SQS path does not parse
-# untrusted CRLs via the affected APIs. Drop ignores when AWS rustls line upgrades.
-ignore = [
-    { id = "RUSTSEC-2026-0104", reason = "transitive AWS rustls 0.21 webpki; CRL panic N/A to SQS client" },
-    { id = "RUSTSEC-2026-0098", reason = "transitive AWS rustls 0.21 webpki; URI name constraints" },
-    { id = "RUSTSEC-2026-0099", reason = "transitive AWS rustls 0.21 webpki; wildcard name constraints" },
-]
 
 [licenses]
 version = 2

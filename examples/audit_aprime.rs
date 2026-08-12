@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         total += 1;
         *size_hist.entry(c.len()).or_default() += 1;
         let flags = flags_for(&c);
-        if flags.iter().any(|f| *f == "tld_variant") {
+        if flags.contains(&"tld_variant") {
             tld_variant += 1;
         }
         let bucket = if c.len() == 2 {
@@ -129,9 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         0.0
     };
-    println!(
-        "mega_share:      {mega_share:.1}%  (mid+mega size>=6 share={mid_mega_share:.1}%)"
-    );
+    println!("mega_share:      {mega_share:.1}%  (mid+mega size>=6 share={mid_mega_share:.1}%)");
     println!();
     println!("recommendation: drop A′ when coalition_size >= 6 (keeps pairs+small).");
 

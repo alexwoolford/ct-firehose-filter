@@ -29,7 +29,7 @@ impl MatchEvent {
         }
     }
 
-    /// JSON byte length used for SQS 256 KiB batch accounting.
+    /// JSON byte length used for batch size accounting.
     pub fn serialized_len(&self) -> Result<usize, serde_json::Error> {
         serde_json::to_vec(self).map(|v| v.len())
     }

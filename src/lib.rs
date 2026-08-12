@@ -15,19 +15,20 @@ pub mod keywords;
 pub mod metrics;
 pub mod novelty;
 pub mod novelty_alert;
+pub mod novelty_sink;
 pub mod parse;
 pub mod pipeline;
 pub mod watchlist;
 
 pub use alerts_file::{
-    open_append as open_alerts_append, rotate_if_needed as rotate_alerts_if_needed,
-    write_line as write_alerts_line, AlertsFileConfig, DEFAULT_ALERTS_KEEP,
-    DEFAULT_ALERTS_MAX_BYTES,
+    open_append as open_alerts_append, prune_to_budget as prune_alerts_to_budget,
+    rotate_if_needed as rotate_alerts_if_needed, write_line as write_alerts_line, AlertsFileConfig,
+    DEFAULT_ALERTS_MAX_BYTES, DEFAULT_ALERTS_MAX_TOTAL_BYTES,
 };
 
-pub use batch::{BatchConfig, Batcher, SQS_MAX_BATCH_BYTES, SQS_MAX_BATCH_MESSAGES};
+pub use batch::{BatchConfig, Batcher, BATCH_MAX_BYTES, BATCH_MAX_MESSAGES};
 pub use config::{Config, EgressBackend};
-pub use egress::{EgressSink, RecordingSink, SqsSink, StdoutSink};
+pub use egress::{EgressSink, RecordingSink, StdoutSink};
 pub use error::{
     BatchError, ConfigError, EgressError, IngressError, KeywordSourceError, ParseError,
     PipelineError, StartupError,
@@ -45,6 +46,7 @@ pub use novelty_alert::{
     dedupe_key, filter_brands, process_match, NoveltyAlert, NoveltyPolicy, ProcessStats,
     EMPTY_SHA1_FP,
 };
+pub use novelty_sink::{default_novelty_alerts, default_novelty_db, NoveltySink};
 pub use parse::{parse_certstream_frame, LeafDomains};
 pub use pipeline::{
     run_pipeline, run_pipeline_with_metrics, MatchEnqueue, PipelineConfig, TryProcessResult,
@@ -52,6 +54,5 @@ pub use pipeline::{
 };
 pub use watchlist::{
     load_domain_file, load_suppress_and_glue, load_suppress_file, parse_domain_lines,
-    DomainWatchlist, HotWatchlist,
-    InspectOutcome,
+    DomainWatchlist, HotWatchlist, InspectOutcome,
 };

@@ -238,7 +238,8 @@ fn region_label_central_does_not_implicate_central_com() {
 fn fabric_label_under_microsoft_does_not_hit_fabric_com() {
     let w = wl(&["fabric.com", "fabric.io"]);
     assert!(
-        w.inspect(&["*.z2f.w.api.fabric.microsoft-int.com"]).is_none(),
+        w.inspect(&["*.z2f.w.api.fabric.microsoft-int.com"])
+            .is_none(),
         "label fabric must not map to fabric.com"
     );
 }
@@ -265,7 +266,9 @@ fn suppress_drops_amazonaws_only_cert() {
 #[test]
 fn suppress_keeps_non_infra_brand() {
     let w = wl_suppress(&["amazonaws.com", "acme.com"], &["amazonaws.com"]);
-    let ev = w.inspect(&["api.acme.com"]).expect("acme.com is not suppressed");
+    let ev = w
+        .inspect(&["api.acme.com"])
+        .expect("acme.com is not suppressed");
     assert_eq!(implicated(&ev), vec!["acme.com"]);
 }
 
@@ -281,10 +284,7 @@ fn suppress_strips_infra_from_mixed_san_cert() {
 
 #[test]
 fn suppress_smoke_host_under_amazonaws_is_dropped() {
-    let w = wl_suppress(
-        &["amazonaws.com", "central.com"],
-        &["amazonaws.com"],
-    );
+    let w = wl_suppress(&["amazonaws.com", "central.com"], &["amazonaws.com"]);
     let outcome = w.inspect_outcome(
         &["*.mtlscanary.kafka.eu-central-1.amazonaws.com"],
         FrameMeta::default(),
@@ -296,13 +296,10 @@ fn suppress_smoke_host_under_amazonaws_is_dropped() {
 #[test]
 #[ignore = "optional local check against the full 752k file; not for CI"]
 fn full_domains_txt_loads_and_matches_google_uniformly() {
-    let path = std::env::var("WATCHLIST_FILE").unwrap_or_else(|_| {
-        "/path/to/domains.txt".to_string()
-    });
+    let path =
+        std::env::var("WATCHLIST_FILE").unwrap_or_else(|_| "/path/to/domains.txt".to_string());
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!(
-            "set WATCHLIST_FILE to your full domains.txt (got {path}): {e}"
-        )
+        panic!("set WATCHLIST_FILE to your full domains.txt (got {path}): {e}")
     });
     let names: Vec<&str> = text
         .lines()
@@ -319,10 +316,7 @@ fn full_domains_txt_loads_and_matches_google_uniformly() {
         .inspect(&["*.z2f.w.api.fabric.microsoft-int.com"])
         .is_none());
 
-    let suppressed = DomainWatchlist::new_with_suppress(
-        &names,
-        ["amazonaws.com", "google.com"],
-    );
+    let suppressed = DomainWatchlist::new_with_suppress(&names, ["amazonaws.com", "google.com"]);
     assert!(suppressed.inspect(&["s3.amazonaws.com"]).is_none());
     assert!(suppressed.inspect(&["www.google.com"]).is_none());
 }

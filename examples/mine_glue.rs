@@ -44,9 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(20);
 
-    let suppress: HashSet<String> = load_suppress_file(&suppress_path)?
-        .into_iter()
-        .collect();
+    let suppress: HashSet<String> = load_suppress_file(&suppress_path)?.into_iter().collect();
 
     // brand -> (event_count on multi-brand certs, partner set)
     let mut partners: HashMap<String, HashSet<String>> = HashMap::new();

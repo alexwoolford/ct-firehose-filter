@@ -107,7 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("claim: HashSet contains is O(1); ns/op should stay flat-ish as prefix grows.");
     println!("claim: RSS and load_ms grow with list size.");
-    println!("oracle_gate: filter RSS << 4 GiB headroom on 12 GiB Always Free; certs/s >> tip rate.");
+    println!(
+        "oracle_gate: filter RSS << 4 GiB headroom on 12 GiB Always Free; certs/s >> tip rate."
+    );
     Ok(())
 }
 

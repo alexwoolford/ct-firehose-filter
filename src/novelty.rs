@@ -61,7 +61,7 @@ impl NoveltyStore {
         Ok((coalitions, hosts))
     }
 
-    /// Checkpoint WAL into the main DB file (safe before cold file copy / S3 upload).
+    /// Checkpoint WAL into the main DB file (safe before cold file copy).
     pub fn checkpoint(&self) -> Result<(), rusqlite::Error> {
         self.conn
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;

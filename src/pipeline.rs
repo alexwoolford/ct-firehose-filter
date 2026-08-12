@@ -69,8 +69,7 @@ impl MatchEnqueue {
                 fully_suppressed: _,
             } => TryProcessResult::NoMatch,
             crate::watchlist::InspectOutcome {
-                event: Some(event),
-                ..
+                event: Some(event), ..
             } => match self.tx.try_send(event) {
                 Ok(()) => TryProcessResult::Enqueued,
                 Err(mpsc::error::TrySendError::Full(_)) => TryProcessResult::ChannelFull,
@@ -93,7 +92,7 @@ impl MatchEnqueue {
 /// Run ingress → parse → filter → bounded mpsc → batcher → sink until cancelled.
 ///
 /// On shutdown: stop accepting new work, drop the match sender so the batcher
-/// drains remaining events (at-least-once toward SQS; no CertStream cursor).
+/// drains remaining events (no CertStream cursor; novelty DB dedupes renewals).
 pub async fn run_pipeline<S>(
     certstream_url: String,
     watchlist: Arc<HotWatchlist>,

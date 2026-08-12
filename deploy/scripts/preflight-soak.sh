@@ -72,30 +72,28 @@ if [[ "$MODE" == "compressed" ]]; then
   A=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/soak-warm.txt")
   sample warm "$A"
 
-  echo "== compressed soak: rotate stress (tiny max bytes) =="
+  echo "== compressed soak: rotate stress (tiny chunk + budget) =="
   # Fresh DB so A′ fires again and exercises rotation under load.
   rm -f "$DB" "$DB-wal" "$DB-shm" "$ALERTS" "$ALERTS".*
-  NOVELTY_ALERTS_MAX_BYTES=4096 NOVELTY_ALERTS_KEEP=2 \
+  NOVELTY_ALERTS_MAX_BYTES=4096 NOVELTY_ALERTS_MAX_TOTAL_BYTES=16384 NOVELTY_ALERTS_GZIP=0 \
   NOVELTY_REQUIRE_DB=0 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \
     cargo run --release --example novelty_replay -- "$JSONL" "$DB" "$ALERTS" >/dev/null
-  ROT=$(find "$WORKDIR" -name 'soak-alerts.jsonl.*' | wc -l | tr -d ' ')
+  ROT=$(find "$WORKDIR" -name 'soak-alerts.jsonl.*' -o -name 'alerts.jsonl.*' 2>/dev/null | wc -l | tr -d ' ')
   echo "rotated_siblings=$ROT"
   if [[ "$ROT" -lt 1 ]]; then
-    echo "FAIL: expected alerts rotation with 4KiB cap" >&2
+    echo "FAIL: expected alerts rotation with 4KiB chunk" >&2
     exit 1
   fi
-  # keep=2 ⇒ live + ≤2 siblings bound disk (older rotations pruned on purpose).
   TOTAL_ALERT_BYTES=0
   for f in "$ALERTS" "$ALERTS".*; do
     [[ -f "$f" ]] || continue
     TOTAL_ALERT_BYTES=$((TOTAL_ALERT_BYTES + $(bytes "$f")))
   done
-  # 3 files × ~4–8KiB headroom
   if [[ "$TOTAL_ALERT_BYTES" -gt 65536 ]]; then
-    echo "FAIL: rotated alerts should stay bounded (got $TOTAL_ALERT_BYTES bytes)" >&2
+    echo "FAIL: rotated alerts should stay under budget (got $TOTAL_ALERT_BYTES bytes)" >&2
     exit 1
   fi
-  echo "alerts_retained_bytes=$TOTAL_ALERT_BYTES (bounded by KEEP)"
+  echo "alerts_retained_bytes=$TOTAL_ALERT_BYTES (bounded by MAX_TOTAL_BYTES)"
   sample rotate_stress
 
   echo "PASS: compressed soak → $OUT"
@@ -110,28 +108,28 @@ if [[ "$HOURS" -eq 0 ]]; then
 fi
 echo "live soak hours=$HOURS interval=${INTERVAL}s → $OUT"
 
-bytes_in_novelty() {
+bytes_in_filter() {
   local path="$1"
-  docker exec ct-novelty-consumer sh -c "wc -c <'$path' 2>/dev/null" 2>/dev/null | tr -d ' \r' || echo 0
+  docker exec ct-firehose-filter sh -c "wc -c <'$path' 2>/dev/null" 2>/dev/null | tr -d ' \r' || echo 0
 }
 
 while [[ $(date +%s) -lt $END ]]; do
   ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   db_b=0
   al_b=0
-  if docker ps --format '{{.Names}}' | grep -qx ct-novelty-consumer; then
-    db_b=$(bytes_in_novelty /var/lib/ct-firehose-filter/novelty.db)
-    wal_b=$(bytes_in_novelty /var/lib/ct-firehose-filter/novelty.db-wal)
-    shm_b=$(bytes_in_novelty /var/lib/ct-firehose-filter/novelty.db-shm)
+  if docker ps --format '{{.Names}}' | grep -qx ct-firehose-filter; then
+    db_b=$(bytes_in_filter /var/lib/ct-firehose-filter/novelty.db)
+    wal_b=$(bytes_in_filter /var/lib/ct-firehose-filter/novelty.db-wal)
+    shm_b=$(bytes_in_filter /var/lib/ct-firehose-filter/novelty.db-shm)
     db_b=$((db_b + wal_b + shm_b))
-    al_b=$(bytes_in_novelty /var/lib/ct-firehose-filter/alerts.jsonl)
+    al_b=$(bytes_in_filter /var/lib/ct-firehose-filter/alerts.jsonl)
     # Sum rotated siblings inside the container.
-    extra=$(docker exec ct-novelty-consumer sh -c \
+    extra=$(docker exec ct-firehose-filter sh -c \
       "cat /var/lib/ct-firehose-filter/alerts.jsonl.* 2>/dev/null | wc -c" 2>/dev/null | tr -d ' \r' || echo 0)
     al_b=$((al_b + extra))
   fi
   log_b=0
-  for c in certstream-sidecar ct-firehose-filter ct-novelty-consumer; do
+  for c in certstream-sidecar ct-firehose-filter ct-firehose-filter; do
     log=$(docker inspect --format='{{.LogPath}}' "$c" 2>/dev/null || true)
     if [[ -n "$log" ]]; then
       # Docker Desktop: LogPath is inside the VM; use docker logs size estimate.

@@ -1,4 +1,4 @@
-//! Live CertStream smoke: watchlist filter → RecordingSink (no SQS).
+//! Live CertStream smoke: watchlist filter → RecordingSink.
 //!
 //! Prefer a self-hosted sidecar (see docs/CERTSTREAM.md):
 //!

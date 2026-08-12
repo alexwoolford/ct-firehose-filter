@@ -16,7 +16,7 @@ pub struct PipelineMetrics {
     pub channel_full: AtomicU64,
     pub reconnects: AtomicU64,
     pub batches_sent: AtomicU64,
-    pub sqs_retries: AtomicU64,
+    pub egress_retries: AtomicU64,
 }
 
 impl PipelineMetrics {
@@ -34,7 +34,7 @@ impl PipelineMetrics {
             channel_full: self.channel_full.load(Ordering::Relaxed),
             reconnects: self.reconnects.load(Ordering::Relaxed),
             batches_sent: self.batches_sent.load(Ordering::Relaxed),
-            sqs_retries: self.sqs_retries.load(Ordering::Relaxed),
+            egress_retries: self.egress_retries.load(Ordering::Relaxed),
         }
     }
 }
@@ -49,7 +49,7 @@ pub struct MetricsSnapshot {
     pub channel_full: u64,
     pub reconnects: u64,
     pub batches_sent: u64,
-    pub sqs_retries: u64,
+    pub egress_retries: u64,
 }
 
 /// Emit a progress line on an interval until cancelled.
@@ -74,7 +74,7 @@ pub async fn run_progress_logger(
                     channel_full = s.channel_full,
                     reconnects = s.reconnects,
                     batches_sent = s.batches_sent,
-                    sqs_retries = s.sqs_retries,
+                    egress_retries = s.egress_retries,
                     "pipeline progress"
                 );
             }

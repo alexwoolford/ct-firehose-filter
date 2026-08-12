@@ -1,21 +1,16 @@
-# Production overlay: quiet trickle to an SQS queue (not a topic). Never use EGRESS=stdout here.
+# Production overlay: in-process A′ novelty → rotated alerts.jsonl (Oracle VM only).
 #
 # Preferred (see docs/DEPLOY.md):
-#   cp .env.prod.example .env.prod   # set SQS_QUEUE_URL, AWS_REGION=us-west-2, watchlist path
+#   cp .env.prod.example .env.prod   # set WATCHLIST_HOST_PATH (≥100k); NOVELTY_REQUIRE_DB / budget via env
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up --build -d
+# NOVELTY_DB / NOVELTY_ALERTS are hardcoded below; only REQUIRE_DB, WATCHLIST_MIN_LEN, and budget vars interpolate.
 #
-# Or export vars:
-#   export SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/ct-matches
-#   export AWS_REGION=us-west-2
-#   export WATCHLIST_HOST_PATH=/path/to/domains.txt
-#   # AWS credentials via env, shared credentials file, or instance role
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+# Never use EGRESS=stdout here — raw match JSONL will fill the disk.
 #
 # Log rotation is defined in docker-compose.yml (10m x 3) and repeated below so a
 # prod-only skim still shows the disk cap. CertStream remains chatty upstream
 # (no quiet mode — https://github.com/d-Rickyy-b/certstream-server-go/issues/73);
 # rotation bounds disk. Filter stays quiet with RUST_LOG=warn.
-# Never use EGRESS=stdout here — match JSONL will fill the disk.
 
 x-logging: &prod-logging
   driver: json-file
@@ -28,59 +23,27 @@ services:
     logging: *prod-logging
   filter:
     logging: *prod-logging
-    environment:
-      EGRESS: sqs
-      SQS_QUEUE_URL: ${SQS_QUEUE_URL:?set SQS_QUEUE_URL}
-      RUST_LOG: warn
-      PROGRESS_INTERVAL_SECS: "300"
-      # Refuse demo keywords.txt under SQS (override with WATCHLIST_MIN_LEN=0 only for smoke).
-      WATCHLIST_MIN_LEN: ${WATCHLIST_MIN_LEN:-100000}
-      AWS_REGION: ${AWS_REGION:-us-west-2}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_PROFILE: ${AWS_PROFILE:-}
-      AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-}
-  # Product SNR: poll raw MatchEvent queue → durable novelty.db → A′ alerts JSONL (+ optional alerts queue).
-  novelty:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ct-novelty-consumer
-    restart: unless-stopped
-    logging: *prod-logging
     # Named volumes are root-owned; run as root so SQLite can create novelty.db
     # (same pattern as certstream sidecar). Prefer host bind-mount + ctfilter uid in systemd.
     user: "0:0"
-    entrypoint: ["/usr/local/bin/ct-novelty-consumer"]
-    depends_on:
-      filter:
-        condition: service_started
     environment:
-      SQS_QUEUE_URL: ${SQS_QUEUE_URL:?set SQS_QUEUE_URL}
-      NOVELTY_ALERTS_QUEUE_URL: ${NOVELTY_ALERTS_QUEUE_URL:-}
+      EGRESS: novelty
+      RUST_LOG: warn
+      PROGRESS_INTERVAL_SECS: "300"
+      # Refuse demo keywords.txt under prod egress (override with WATCHLIST_MIN_LEN=0 only for smoke).
+      WATCHLIST_MIN_LEN: ${WATCHLIST_MIN_LEN:-100000}
       NOVELTY_DB: /var/lib/ct-firehose-filter/novelty.db
       NOVELTY_ALERTS: /var/lib/ct-firehose-filter/alerts.jsonl
-      # First boot: set NOVELTY_REQUIRE_DB=0 once to create DB, then flip to 1 (or restore from S3).
+      # First boot: leave 0 to create DB; then flip to 1 once healthy.
       NOVELTY_REQUIRE_DB: ${NOVELTY_REQUIRE_DB:-0}
       NOVELTY_TIERS: A
       NOVELTY_MAX_COALITION: ${NOVELTY_MAX_COALITION:-5}
-      # Bound alerts.jsonl growth (rotate at 50MiB; keep 3 siblings).
-      NOVELTY_ALERTS_MAX_BYTES: ${NOVELTY_ALERTS_MAX_BYTES:-52428800}
-      NOVELTY_ALERTS_KEEP: ${NOVELTY_ALERTS_KEEP:-3}
-      SUPPRESS_FILE: /data/suppress.txt
-      GLUE_FILE: /data/glue.txt
-      RUST_LOG: warn
-      AWS_REGION: ${AWS_REGION:-us-west-2}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_PROFILE: ${AWS_PROFILE:-}
-      AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-}
+      # Chunk + total budget (multi-year headroom on ~200GB boot volume).
+      NOVELTY_ALERTS_MAX_BYTES: ${NOVELTY_ALERTS_MAX_BYTES:-268435456}
+      NOVELTY_ALERTS_MAX_TOTAL_BYTES: ${NOVELTY_ALERTS_MAX_TOTAL_BYTES:-21474836480}
+      NOVELTY_ALERTS_GZIP: ${NOVELTY_ALERTS_GZIP:-1}
     volumes:
       - novelty-data:/var/lib/ct-firehose-filter
-      - ${SUPPRESS_HOST_PATH:-./suppress.txt}:/data/suppress.txt:ro
-      - ${GLUE_HOST_PATH:-./glue.txt}:/data/glue.txt:ro
 
 volumes:
   novelty-data:

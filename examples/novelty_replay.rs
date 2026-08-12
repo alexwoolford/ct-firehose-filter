@@ -1,6 +1,6 @@
-//! Durable novelty replay over MatchEvent JSONL (offline / shoestring).
+//! Durable novelty replay over MatchEvent JSONL (offline).
 //!
-//! For continuous SQS → A′ alerts, use `ct-novelty-consumer` instead.
+//! Production continuous path is `EGRESS=novelty` in the main filter binary.
 //!
 //! ```bash
 //! cargo run --release --example novelty_replay -- /tmp/ct-ma-eval.jsonl
@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if require_db && !db_path_buf.exists() {
         return Err(format!(
             "NOVELTY_REQUIRE_DB=1 but novelty DB missing: {db_path}\n\
-             Restore from S3 snapshot first (see docs/SIGNAL.md), or unset REQUIRE_DB for a deliberate cold start."
+             Restore a local novelty.db backup first, or unset REQUIRE_DB for a deliberate cold start."
         )
         .into());
     }

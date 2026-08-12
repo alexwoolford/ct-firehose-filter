@@ -1,20 +1,20 @@
 # ct-firehose-filter
 
-Edge filter for the Certificate Transparency firehose (CertStream protocol). It drops CT noise in RAM and trickles matched certificates out through a pluggable batched egress sink (`stdout` for local/dev, **SQS queue** for production).
+Edge filter for the Certificate Transparency firehose (CertStream protocol). It drops CT noise in RAM and, in production, runs **in-process A′ novelty** so only first-seen multi-brand alerts land on rotated local `alerts.jsonl` (plus compact `novelty.db`). Local/dev can use `EGRESS=stdout`. Designed to run **standalone on an Oracle Always Free VM** — no cloud queues or object storage.
 
-**Mosaic tile (portfolio):** this is personal R&D — one weak signal among many. Multi-brand SANs on CT often reflect shared vendors, subsidiaries, or integration scaffolding. Alone it is **not** actionable alpha; in aggregate with other tiles it can support PE / corp-dev diligence and makes a strong **Neo4j demo** (brands as nodes, co-named certs as relationship edges). Production watchlists and credentials stay private; never commit `domains.txt` or `.env.prod`.
+**Mosaic tile (portfolio):** this is personal R&D — one weak signal among many. Multi-brand SANs on CT often reflect shared vendors, subsidiaries, or integration scaffolding. Alone it is **not** actionable alpha; in aggregate with other tiles it can support PE / corp-dev diligence and makes a strong **Neo4j demo** (brands as nodes, co-named certs as relationship edges). Production watchlists stay private; never commit `domains.txt` or `.env.prod`.
 
 **Production ingest:** run self-hosted CertStream (`0rickyy0/certstream-server-go`) beside this
 Rust filter — keep them separate ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)). Public Calidog
-is best-effort only. **Product go-live** = edge → SQS **plus** continuous A′ novelty
+is best-effort only. **Product go-live** = `EGRESS=novelty` (in-process A′ → local alerts)
 ([`docs/DEPLOY.md`](docs/DEPLOY.md)). Scale: [`docs/SCALE.md`](docs/SCALE.md). Ops:
 [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md). Signal quality: [`docs/SIGNAL.md`](docs/SIGNAL.md).
 
-Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). High-volume CT infra apexes (AWS, Google, …) may remain on the shared watchlist file but are stripped at egress via [`suppress.txt`](suppress.txt) (mega-apex) plus [`glue.txt`](glue.txt) (marketing/WAF/DAM/CRS glue that fakes multi-brand SANs) so this edge stays needle-shaped.
+Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). High-volume CT infra apexes (Amazon, Google, …) may remain on the shared watchlist file but are stripped at egress via [`suppress.txt`](suppress.txt) (mega-apex) plus [`glue.txt`](glue.txt) (marketing/WAF/DAM/CRS glue that fakes multi-brand SANs) so this edge stays needle-shaped.
 
-Raw emit after suppress is still mostly routine cert churn. Continuous A′ novelty (`ct-novelty-consumer`) on SQS turns that into a reviewable trickle of **first-seen** brand coalitions.
+Raw emit after suppress is still mostly routine cert churn. In-process A′ novelty turns multi-brand first-seens into a reviewable trickle on disk; single-brand matches are discarded in RAM.
 
-This repo is **not** a full entity-resolution product (no SEC CIK/LEI mapping, no pDNS wildcard piercing, no FIX/S3/Snowflake feeds).
+This repo is **not** a full entity-resolution product (no SEC CIK/LEI mapping, no pDNS wildcard piercing, no FIX / warehouse feeds). Off-box streaming of alerts is **out of scope for now**.
 
 ## Matching rule
 
@@ -44,7 +44,7 @@ The older Aho-Corasick keyword automaton remains in `src/filter.rs` for unit tes
 
 ## Delivery semantics
 
-CertStream has **no durable cursor** (unlike crt.sh `ct_monitor`'s `entry_id`). With `EGRESS=sqs` this edge filter is **at-least-once toward the SQS queue** after a successful `SendMessageBatch`: reconnects may replay or skip frames; SQS send retries until success; downstream consumers must tolerate duplicates.
+CertStream has **no durable cursor** (unlike crt.sh `ct_monitor`'s `entry_id`). With `EGRESS=novelty`, matches are processed in-process into SQLite + alerts; reconnects may skip or replay frames. Prefer durable `novelty.db` so renewals stay quiet after restart.
 
 ## Tests first
 
@@ -55,11 +55,7 @@ cargo test
 cargo test --test watchlist_adversarial full_domains_txt_loads -- --ignored --nocapture
 ```
 
-### SQS without real AWS in CI
-
-CI does **not** run LocalStack or hit a live queue. [`tests/batch_egress.rs`](tests/batch_egress.rs) uses **`aws-smithy-mocks`** (+ `aws-sdk-sqs` `test-util`) to assert `SqsSink` calls `SendMessageBatch` once for ten events and never `SendMessage`. Batching/`RecordingSink` cover the rest offline.
-
-That is enough for this edge (thin batch sender). Revisit LocalStack in CI only when an SQS-*polled* novelty consumer lands (receive / delete / visibility / DLQ). Until then: optional one-shot manual smoke against a real `us-west-2` queue (or LocalStack on a laptop) when wiring IAM/`SQS_QUEUE_URL`.
+Batching is covered offline via `RecordingSink` in [`tests/batch_egress.rs`](tests/batch_egress.rs). Novelty is covered by unit tests plus `novelty_replay` / preflight scripts.
 
 ## Local: docker compose (recommended)
 
@@ -86,30 +82,27 @@ export RUST_LOG=info
 cargo run --release
 ```
 
-## Production: SQS queue + A′ novelty (quiet)
+## Production: in-process A′ novelty (Oracle VM)
 
-**Never use `EGRESS=stdout` in production** — match JSONL will fill the disk. Prefer the remote checklist in [`docs/DEPLOY.md`](docs/DEPLOY.md). Short form:
+**Never use `EGRESS=stdout` in production** — raw match JSONL will fill the disk.
+Prefer the remote checklist in [`docs/DEPLOY.md`](docs/DEPLOY.md). Short form:
 
 ```bash
 cp .env.prod.example .env.prod
-# edit SQS_QUEUE_URL, AWS_REGION=us-west-2, WATCHLIST_HOST_PATH (= full domains.txt), credentials
-# first novelty boot: NOVELTY_REQUIRE_DB=0 (or restore DB from S3, then 1)
+# edit WATCHLIST_HOST_PATH (= full domains.txt); first boot: NOVELTY_REQUIRE_DB=0
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up --build -d
 ```
 
-Prod overlay sets `RUST_LOG=warn`, `PROGRESS_INTERVAL_SECS=300`, `WATCHLIST_MIN_LEN=100000`,
-Docker log rotation (`10m` × 3), and the **`novelty`** service (`ct-novelty-consumer`). The CertStream
-sidecar is chatty upstream (no quiet mode); rotation bounds disk. Progress counters are `debug`
-(silent at `warn`). Full checklist:
-[`docs/CERTSTREAM.md`](docs/CERTSTREAM.md#quiet-production-checklist).
-
-Advanced (no Docker): filter + `ct-novelty-consumer` via [`deploy/systemd/`](deploy/systemd/).
+Prod overlay sets `EGRESS=novelty`, `RUST_LOG=warn`, `WATCHLIST_MIN_LEN=100000`,
+Docker log rotation (`10m` × 3), and alert chunk/budget caps (256 MiB chunks, 20 GiB total, gzip).
+Output: `/var/lib/ct-firehose-filter/alerts.jsonl` (+ rotated `.gz` siblings) and `novelty.db`.
+Full checklist: [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md#quiet-production-checklist).
 
 | `EGRESS` | Meaning |
 |---|---|
 | `stdout` (default) | JSONL matches on stdout — **local/dev only** |
-| `sqs` | publish to an SQS **queue** (requires `SQS_QUEUE_URL`) |
+| `novelty` | in-process A′ → local `novelty.db` + rotated `alerts.jsonl` (**prod**) |
 
 `KEYWORDS_FILE` / `KEYWORD_RELOAD_SECS` still work as aliases. Do not commit the 752k domain file into this repo.
 
@@ -121,30 +114,31 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 
 | From | Borrowed here |
 |---|---|
-| crt.sh-style monitors | Exponential reconnect + jitter; size/time batching; bounded backpressure; lag counters; at-least-once honesty |
-| Hardened Rust services | CI/fmt/clippy/deny; typed `Config::validate()`; atomic progress logs; graceful drain; release LTO; startup vs runtime errors |
+| crt.sh-style monitors | Exponential reconnect + jitter; size/time batching; bounded backpressure; lag counters |
+| Hardened Rust services | CI/fmt/clippy/deny; typed `Config::validate()`; atomic progress logs; graceful drain; release LTO |
 
-**Not** in scope: Postgres CT warehouse, direct log polling, GeoIP/WHOIS/HTML scrape stacks.
+**Not** in scope: Postgres CT warehouse, direct log polling, GeoIP/WHOIS/HTML scrape stacks, off-box alert streaming.
 
 ## Layout
 
 | path | role |
 |---|---|
 | `docs/ARCHITECTURE.md` | keep filter outside CertStream (decision) |
-| `docs/DEPLOY.md` | product prod-ready gates (edge SQS + A′ novelty) |
+| `docs/DEPLOY.md` | Oracle VM prod-ready gates (`EGRESS=novelty`) |
 | `docs/SCALE.md` | 752k watchlist RSS / throughput measurements |
 | `docs/CERTSTREAM.md` | sidecar + compose + egress runbook |
 | `docs/SIGNAL.md` | 15m tip eval + SNR / novelty alert semantics |
 | `src/novelty.rs` | SQLite first-seen coalitions / hosts |
 | `src/novelty_alert.rs` | shared A′/B′ processing |
-| `src/bin/ct-novelty-consumer.rs` | continuous SQS → novelty → alerts |
+| `src/novelty_sink.rs` | in-process A′ egress (`EGRESS=novelty`) |
+| `src/alerts_file.rs` | chunk rotate + total byte budget + gzip |
 | `glue.txt` | SaaS/marketing glue apexes (merged with suppress) |
 | `suppress.txt` | default CT mega-apex suppress (this filter only) |
 | `Dockerfile` | multi-stage filter image |
 | `docker-compose.yml` | init + CertStream + filter (`EGRESS=stdout`) |
-| `docker-compose.prod.yml` | SQS overlay |
-| `.env.prod.example` | prod compose env template (no secrets) |
-| `deploy/` | systemd units (advanced) + novelty S3 scripts |
+| `docker-compose.prod.yml` | novelty overlay (Oracle) |
+| `.env.prod.example` | prod compose env template |
+| `deploy/` | cloud-init, systemd, preflight scripts |
 | `examples/audit_aprime.rs` | A′ precision buckets + label sample |
 | `examples/audit_screened_out.rs` | suppress/glue / high-churn sample audit |
 | `examples/watchlist_scale_bench.rs` | local 1k→752k RSS / ns/op bench |
@@ -156,6 +150,6 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `src/pipeline.rs` | bounded MPSC backpressure + metrics wiring |
 | `src/metrics.rs` | atomic counters + periodic progress logs |
 | `src/batch.rs` | flush at 10 messages, 256 KiB, or timer |
-| `src/egress.rs` | `EgressSink`, `StdoutSink`, `SqsSink`, test fake |
+| `src/egress.rs` | `EgressSink`, `StdoutSink`, test fake |
 | `src/ingress.rs` | CertStream WebSocket, backoff + jitter + client ping |
 | `keywords.txt` | tiny local demo watchlist |

@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# Failure drill: stop consumer → SQS backlog → snapshot → wipe DB → restore → no cold flood.
+# Failure drill: warm DB → local snapshot → wipe DB → restore → no cold flood.
 #
-# Offline mode (default): uses local file "snapshot" + novelty_replay on a JSONL dump.
-# With --s3: uploads/restores via novelty-s3-*.sh (needs NOVELTY_S3_URI or arg).
+# Offline only (local file snapshot + novelty_replay on a JSONL dump).
 #
 # Usage:
 #   deploy/scripts/preflight-failure-drill.sh
-#   deploy/scripts/preflight-failure-drill.sh --s3 s3://bucket/ct-preflight/novelty.db
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -14,19 +12,11 @@ cd "$ROOT"
 
 JSONL="${PREFLIGHT_JSONL:-/tmp/ct-ma-eval.jsonl}"
 WORKDIR="${PREFLIGHT_DIR:-/tmp/ct-preflight}"
-S3_URI=""
-USE_S3=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --s3)
-      USE_S3=1
-      S3_URI="${2:-${NOVELTY_S3_URI:-}}"
-      shift
-      if [[ $# -gt 0 && "$1" != --* ]]; then shift; fi
-      ;;
     -h|--help)
-      echo "usage: $0 [--s3 [s3://bucket/key]]"
+      echo "usage: $0"
       exit 0
       ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
@@ -58,13 +48,13 @@ fi
 
 rm -f "$DB" "$DB-wal" "$DB-shm" "$ALERTS" "$ALERTS".* "$SNAP"
 
-echo "== 1) warm DB on first half (simulates running consumer) =="
+echo "== 1) warm DB on first half (simulates running filter) =="
 NOVELTY_REQUIRE_DB=0 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \
   cargo run --release --example novelty_replay -- "$HALF1" "$DB" "$ALERTS" | tee "$WORKDIR/drill-h1.txt"
 A1=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/drill-h1.txt")
 echo "half1 A′=$A1"
 
-echo "== 2) snapshot (consumer 'stopped'; state durable) =="
+echo "== 2) snapshot (process 'stopped'; state durable) =="
 if command -v sqlite3 >/dev/null; then
   sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);"
   # `.backup` is a shell meta-command — must be stdin, not -cmd SQL.
@@ -77,27 +67,14 @@ fi
 test -s "$SNAP"
 SNAP_BYTES=$(wc -c <"$SNAP" | tr -d ' ')
 
-if [[ $USE_S3 -eq 1 ]]; then
-  if [[ -z "$S3_URI" ]]; then
-    echo "set NOVELTY_S3_URI or pass --s3 s3://bucket/key" >&2
-    exit 1
-  fi
-  echo "== 2b) upload snapshot to $S3_URI =="
-  NOVELTY_DB="$SNAP" NOVELTY_S3_URI="$S3_URI" "$ROOT/deploy/scripts/novelty-s3-snapshot.sh" "$SNAP" "$S3_URI"
-fi
-
 echo "== 3) wipe DB (simulates disk wipe / new volume) =="
 rm -f "$DB" "$DB-wal" "$DB-shm"
 : >"$ALERTS"
 
 echo "== 4) restore before start =="
-if [[ $USE_S3 -eq 1 ]]; then
-  NOVELTY_DB="$DB" NOVELTY_S3_URI="$S3_URI" "$ROOT/deploy/scripts/novelty-s3-restore.sh" "$S3_URI" "$DB"
-else
-  cp -f "$SNAP" "$DB"
-  rm -f "$DB-wal" "$DB-shm"
-  echo "restored local snapshot ($SNAP_BYTES bytes) → $DB"
-fi
+cp -f "$SNAP" "$DB"
+rm -f "$DB-wal" "$DB-shm"
+echo "restored local snapshot ($SNAP_BYTES bytes) → $DB"
 test -f "$DB"
 
 echo "== 5) REQUIRE_DB=1 + second half (catch-up; should NOT re-flood half1 keys) =="

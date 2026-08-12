@@ -5,7 +5,7 @@ Assessment of a **15-minute tip capture** (full ~752k watchlist + [`suppress.txt
 ## Intent (mosaic tile)
 
 1. Watch hundreds of thousands of company domains on live CT (not toy keywords).
-2. Emit when a SAN is under a watchlist brand (**exact eTLD+1**), without drowning in Google/AWS self-noise.
+2. Emit when a SAN is under a watchlist brand (**exact eTLD+1**), without drowning in mega-apex self-noise.
 3. Treat the trickle as a **weak diligence signal** — staging / SSO / VPN / integration scaffolding that can reveal **hidden or latent commercial relationships** — **not** proof of deals and **not** standalone actionable alpha.
 
 CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev research and Neo4j relationship demos; dangerous if oversold as a trading feed.
@@ -16,7 +16,7 @@ CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev resear
 |---|---|---|
 | Firehose → watchlist match | Works at scale (~47k brands hit in 15m) | Yes |
 | Mega-apex suppress | Cut ~3.2M emits; remaining still ~1M/hr extrapolated | Partial |
-| Human/SQS-ready diligence trickle | Raw emit still too hot | No |
+| Human-ready diligence trickle | Raw emit still too hot | No |
 | Early-warning classifier / novelty store | Out of scope for this binary | N/A |
 
 **Volume:** ~268k emits / 15m ≈ **1.07M/hr**. Top 20 brands ≈22% of events. Roughly half of events come from brands with ≥100 hits in the window (routine infra churn).
@@ -65,7 +65,7 @@ Scarce single-brand hosts (quiet brand, unusual subdomain) are a second, weaker 
 | Usable M&A early-warning feed by itself? | **No** — still noise-dominated |
 | Does CT contain relationship-relevant structure? | **Yes** — multi-brand SANs are the clearest class |
 | All noise, no signal? | **No** — mostly noise, with a recoverable signal |
-| Ready for Oracle production? | **Internal go-live** = edge SQS + size-capped A′ ([`DEPLOY.md`](DEPLOY.md)); **decision-grade** = not yet ([bar](#why-this-signal-matters-pe--corp-dev-diligence)) |
+| Ready for Oracle production? | **Internal go-live** = `EGRESS=novelty` + size-capped A′ ([`DEPLOY.md`](DEPLOY.md)); **decision-grade** = not yet ([bar](#why-this-signal-matters-pe--corp-dev-diligence)) |
 
 Gold is not in reading 268k lines. Rank downstream:
 
@@ -103,9 +103,9 @@ cargo run --release --example mine_glue -- \
 
 Avoid: volume-based brand suppress, `vpn`/`sso`/`merge` hard filters, fuzzy SLD matching.
 
-## Novelty alerts (`ct-novelty-consumer` + `novelty_replay`)
+## Novelty alerts (`EGRESS=novelty` + `novelty_replay`)
 
-**Product path:** continuous [`ct-novelty-consumer`](../src/bin/ct-novelty-consumer.rs) polls the raw MatchEvent SQS queue, updates durable SQLite, and appends **A′** alerts to `alerts.jsonl` (optional second SQS). Packaged in [`docker-compose.prod.yml`](../docker-compose.prod.yml) and [`deploy/systemd/ct-novelty-consumer.service`](../deploy/systemd/ct-novelty-consumer.service).
+**Product path:** `EGRESS=novelty` runs A′ in-process in the filter binary on Oracle Always Free (SQLite `novelty.db` + rotated `alerts.jsonl`).
 
 **Offline proof:** [`examples/novelty_replay.rs`](../examples/novelty_replay.rs) over MatchEvent JSONL (same processing via [`novelty_alert`](../src/novelty_alert.rs)).
 
@@ -118,10 +118,7 @@ Loads [`suppress.txt`](../suppress.txt) + [`glue.txt`](../glue.txt) so mega-apex
 | Fully ignored | All keywords on suppress/glue | 20,563 |
 
 ```bash
-# Continuous (prod compose / systemd)
-NOVELTY_REQUIRE_DB=0 cargo run --release --bin ct-novelty-consumer
-
-# Offline replay
+# Offline replay (same A′ logic as EGRESS=novelty)
 rm -f /tmp/ct-novelty.db
 cargo run --release --example novelty_replay -- \
   /tmp/ct-ma-eval.jsonl /tmp/ct-novelty.db /tmp/ct-novelty-alerts.jsonl
@@ -133,25 +130,24 @@ cargo run --release --example novelty_replay -- \
 
 ## Shoestring persistence (survive restarts)
 
-The **edge filter is still stateless**. The product trickle is a **stateful delta filter**: emit only **first-seen** coalition keys (`INSERT OR IGNORE`). Repeat Optum+UHC → no alert. State lives in SQLite (`coalitions` + `hosts`), with `PRAGMA journal_mode=WAL`.
+With `EGRESS=novelty`, A′ runs **in-process** in the filter. The product trickle is a **stateful delta filter**: emit only **first-seen** coalition keys (`INSERT OR IGNORE`). Repeat Optum+UHC → no alert. State lives in SQLite (`coalitions` + `hosts`), with `PRAGMA journal_mode=WAL`.
 
 **Primary (shoestring):** keep `NOVELTY_DB` on a durable Oracle boot/block volume at `/var/lib/ct-firehose-filter/novelty.db` — **never `/tmp` in prod**. Compose mounts `novelty-data` there; systemd uses the same path.
 
-**Backup (flood insurance):** nightly [`novelty-s3-snapshot.sh`](../deploy/scripts/novelty-s3-snapshot.sh) (sqlite3 `.backup`) → S3 `us-west-2`. After wipe: [`novelty-s3-restore.sh`](../deploy/scripts/novelty-s3-restore.sh) **before** start with `NOVELTY_REQUIRE_DB=1`.
+**Backup (flood insurance):** local file copy or `sqlite3 "$NOVELTY_DB" ".backup '$BACKUP_PATH'"` (checkpoint WAL first if the filter is stopped). After wipe: restore that file **before** start with `NOVELTY_REQUIRE_DB=1`.
 
 | Piece | Path / setting |
 |---|---|
 | Novelty DB | `/var/lib/ct-firehose-filter/novelty.db` (`NOVELTY_DB`) — **durable volume, never `/tmp`** |
 | Alerts out | `/var/lib/ct-firehose-filter/alerts.jsonl` (`NOVELTY_ALERTS`) |
-| Optional alerts queue | `NOVELTY_ALERTS_QUEUE_URL` |
 | Guard | `NOVELTY_REQUIRE_DB=1` — refuse start if DB missing |
 | Tiers | `NOVELTY_TIERS=A` (default; human-scale). B′ opt-in only |
 | Max coalition | `NOVELTY_MAX_COALITION=5` (drop size ≥6 shared-vendor junk) |
-| Nightly backup | [`deploy/scripts/novelty-s3-snapshot.sh`](../deploy/scripts/novelty-s3-snapshot.sh) → S3 `us-west-2` |
-| Restore | [`deploy/scripts/novelty-s3-restore.sh`](../deploy/scripts/novelty-s3-restore.sh) **before** starting consumer |
-| Alerts rotation | `NOVELTY_ALERTS_MAX_BYTES` (default 50MiB) + `NOVELTY_ALERTS_KEEP=3`; see [`deploy/logrotate/ct-novelty-alerts`](../deploy/logrotate/ct-novelty-alerts) |
+| Backup | Local file copy or `sqlite3 … '.backup …'` |
+| Restore | Copy backup over `NOVELTY_DB` **before** starting with `REQUIRE_DB=1` |
+| Alerts rotation | `NOVELTY_ALERTS_MAX_BYTES` (256 MiB chunks) + `NOVELTY_ALERTS_MAX_TOTAL_BYTES` (20 GiB) + gzip |
 | Hosts table | **A′-only does not insert hosts** (avoids unbounded brand×host growth); enable `NOVELTY_TIERS` with `B` only when you accept that cost |
-| systemd | [`ct-novelty-consumer.service`](../deploy/systemd/ct-novelty-consumer.service) + snapshot timer |
+| systemd | [`ct-firehose-filter.service`](../deploy/systemd/ct-firehose-filter.service) with `EGRESS=novelty` |
 | Pre-flight | [`preflight-smoke.sh`](../deploy/scripts/preflight-smoke.sh) / [`preflight-soak.sh`](../deploy/scripts/preflight-soak.sh) / [`preflight-failure-drill.sh`](../deploy/scripts/preflight-failure-drill.sh) — see [`DEPLOY.md`](DEPLOY.md#pre-flight-before-oracle-disk--crash) |
 
 | Event | Novelty DB | Alert behavior |
@@ -159,7 +155,7 @@ The **edge filter is still stateless**. The product trickle is a **stateful delt
 | Process crash, disk OK | Intact | Resume; no flood |
 | VM reboot, volume OK | Intact | Resume; no flood |
 | Disk wipe / new instance, no restore | Empty | Cold flood until warmed |
-| Disk wipe + S3 restore | Restored | Near-quiet; only keys never seen before |
+| Disk wipe + local backup restore | Restored | Near-quiet; only keys never seen before |
 
 Gap during outage: CertStream has **no durable cursor**, so certs during downtime may be **missed**. Novelty prevents **re-alerting** known keys after catch-up; it does not guarantee no gaps.
 
@@ -168,14 +164,11 @@ Gap during outage: CertStream has **no durable cursor**, so certs during downtim
 cargo run --release --example novelty_replay -- \
   /tmp/ct-ma-eval.jsonl /tmp/ct-novelty.db /tmp/ct-novelty-alerts.jsonl
 
-# Prod-shaped continuous consumer
-export NOVELTY_DB=/var/lib/ct-firehose-filter/novelty.db
-export NOVELTY_REQUIRE_DB=1
-export NOVELTY_TIERS=A
-export SQS_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/123456789012/ct-matches
-# After disk wipe:
-#   deploy/scripts/novelty-s3-restore.sh s3://bucket/ct-firehose/novelty.db
-cargo run --release --bin ct-novelty-consumer
+# Backup / restore (filter stopped)
+sqlite3 /var/lib/ct-firehose-filter/novelty.db ".backup '/var/backups/novelty.db'"
+# After wipe:
+#   cp /var/backups/novelty.db /var/lib/ct-firehose-filter/novelty.db
+# then start with NOVELTY_REQUIRE_DB=1
 ```
 
 **Never delete `novelty.db` casually.**
@@ -184,7 +177,7 @@ cargo run --release --bin ct-novelty-consumer
 
 Suppress only mega-apexes ([`suppress.txt`](../suppress.txt)) and SaaS glue ([`glue.txt`](../glue.txt)). Do not suppress busy public companies off the shared watchlist.
 
-**Gold extraction** = durable `ct-novelty-consumer` (SQLite on disk + optional S3 snapshot + size-capped A′ alerts). Edge→SQS alone is not the product feed.
+**Gold extraction** = durable `EGRESS=novelty` on the Oracle VM (SQLite on disk + size-capped A′ → `alerts.jsonl`). Raw MatchEvent dumps alone are not the product feed.
 
 ## Precision audit (screened-in vs screened-out)
 

@@ -36,11 +36,9 @@ Matched batches go through `EgressSink`. The binary selects a backend with `EGRE
 | `EGRESS` | Behavior | Needs |
 |---|---|---|
 | `stdout` (default) | JSONL match events on stdout | nothing |
-| `sqs` | AWS SQS `SendMessageBatch` | `SQS_QUEUE_URL` + AWS credentials |
+| `novelty` | in-process A′ → `novelty.db` + rotated `alerts.jsonl` | `NOVELTY_DB` / `NOVELTY_ALERTS` (defaults under `/var/lib/...`) |
 
-CI never needs a live queue: `SqsSink` is covered by **SDK mocks** in [`tests/batch_egress.rs`](../tests/batch_egress.rs) (see README “SQS without real AWS in CI”). LocalStack is optional for laptop smoke only — not wired into GitHub Actions for v1.
-
-SQS is a **queue**, not a topic (SNS/Kafka/Pub/Sub are topic-like). Downstream consumers read the queue.
+Production path is **`EGRESS=novelty`** on Oracle Always Free. Off-box streaming of A′ alerts is out of scope for now.
 
 ## Compose-first local path
 
@@ -78,11 +76,11 @@ CERTSTREAM_URL=ws://127.0.0.1:8080/ EGRESS=stdout \
   WATCHLIST_FILE=keywords.txt cargo run --release
 ```
 
-Production SQS overlay (default remote path — full checklist [`DEPLOY.md`](DEPLOY.md)):
+Production novelty overlay (default remote path — full checklist [`DEPLOY.md`](DEPLOY.md)):
 
 ```bash
 cp .env.prod.example .env.prod
-# set SQS_QUEUE_URL, AWS_REGION=us-west-2, WATCHLIST_HOST_PATH, credentials
+# set WATCHLIST_HOST_PATH; first boot NOVELTY_REQUIRE_DB=0
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up --build -d
 ```
 
@@ -97,23 +95,22 @@ Prefer Compose when Docker is available ([`DEPLOY.md`](DEPLOY.md)). Sample units
 - `certstream-server-go.service` — CT fan-in (install/seed CertStream yourself)
 - `ct-firehose-filter.service` — edge filter (`After=` / `Requires=` the sidecar)
 
-Set `EGRESS=sqs`, `SQS_QUEUE_URL`, `AWS_REGION=us-west-2`, and `RUST_LOG=warn` in the env file for production.
+Set `EGRESS=novelty` and `RUST_LOG=warn` in the env file for production
+([`deploy/systemd/ct-firehose-filter.env.example`](../deploy/systemd/ct-firehose-filter.env.example)).
 Never use `EGRESS=stdout` in production (JSONL matches will fill the disk).
 
 ## Quiet production checklist
 
-Goal: firehose → trickle to an SQS **queue**, without filling the disk.
+Goal: firehose → in-process A′ trickle to rotated `alerts.jsonl`, without filling the disk.
 
 1. **Seed index** on first boot; keep the `certstream-data` volume (avoid casual `down -v`).
-2. **`EGRESS=sqs` only** in production — not `stdout`.
-3. **Filter logs:** `RUST_LOG=warn` (reconnect / backpressure / SQS failures). Progress counters are `debug`.
+2. **`EGRESS=novelty` only** in shoestring production — not `stdout`.
+3. **Filter logs:** `RUST_LOG=warn` (reconnect / backpressure / failures). Progress counters are `debug`.
 4. **Rotate container logs.** Compose sets `json-file` `max-size: 10m` / `max-file: 3` on all services.
-   certstream-server-go has **no quiet mode** and prints `Processed N entries` to stderr often;
-   rotation is what bounds disk. Do not `docker compose logs -f` forever on a prod host.
-5. **Novelty disk bounds:** A′-only skips `hosts` rows; `NOVELTY_ALERTS_MAX_BYTES` (50MiB) rotates `alerts.jsonl`.
+5. **Novelty disk bounds:** A′-only skips `hosts` rows; chunk rotate + **20 GiB** total budget + gzip (`NOVELTY_ALERTS_*`).
 6. **systemd/journald:** configure `SystemMaxUse=` / rate limits if not using Docker.
 7. **Resources:** ~100 MiB RSS for a 752k watchlist HashSet (measured — [`SCALE.md`](SCALE.md)) + ~0.5–2 GB for CertStream; CPU follows CT rate;
-   durable disk ≈ rotated logs + compact `novelty.db` + rotated alerts (+ tiny `ct_index.json`).
+   durable disk ≈ rotated logs + compact `novelty.db` + budget-capped alerts (+ tiny `ct_index.json`).
 8. **Pre-flight:** [`DEPLOY.md`](DEPLOY.md#pre-flight-before-oracle-disk--crash) smoke / soak / wipe-restore drill before cutover.
 
 ## Cheap continuous host (US, under ~$10/mo)
@@ -123,8 +120,8 @@ Preferred production shape for months-long unattended runs near Colorado:
 ```text
 Public CT logs --> CertStream + filter on Oracle Always Free (Phoenix)
                               |
-                              v  EGRESS=sqs (small JSON batches)
-                         AWS SQS (us-west-2)
+                              v  EGRESS=novelty (RAM → A′ only)
+                         novelty.db + alerts.jsonl (local, budget-capped)
 ```
 
 | Host | Why |
@@ -132,17 +129,14 @@ Public CT logs --> CertStream + filter on Oracle Always Free (Phoenix)
 | **Oracle Always Free Ampere** (`us-phoenix-1`, 2 OCPU / 12 GB) | ~$0 compute, enough RAM, ~700 mi from Lafayette CO |
 | Hetzner US (Hillsboro OR / Ashburn VA), ~8 GB | Paid fallback (~$10 class) if Oracle capacity fails |
 | Home Pi / Comcast | Avoid — CT **download** burns residential caps |
-| AWS/Azure/GCP on-demand 8 GB VM | Usually ~$40–60/mo — fine for **SQS only**, not the fan-in box |
+| Other on-demand 8 GB VMs | Usually ~$40–60/mo — unnecessary for this shoestring path |
 
 Practical notes:
 
-- Operator checklist: [`DEPLOY.md`](DEPLOY.md) (production blocked until gates there).
+- Operator checklist: [`DEPLOY.md`](DEPLOY.md).
 - Scale gate: [`SCALE.md`](SCALE.md).
-- Mount full `domains.txt` + [`suppress.txt`](../suppress.txt) + [`glue.txt`](../glue.txt); set `EGRESS=sqs`, `SQS_QUEUE_URL`, `AWS_REGION=us-west-2`. Never use demo `keywords.txt` in production.
-- IAM on the VM: least-privilege `sqs:SendMessage` / `sqs:SendMessageBatch` on one queue.
+- Mount full `domains.txt` + [`suppress.txt`](../suppress.txt) + [`glue.txt`](../glue.txt); set `EGRESS=novelty`. Never use demo `keywords.txt` in production.
 - Prefer CertStream **`/domains-only`** for smaller frames (see below).
-- Consumers must **dedupe** on **matched domains** (and fingerprint when present): delivery is **at-least-once** toward SQS; CertStream has no durable cursor. Lite `/` frames often omit leaf cert data, so fingerprint may be the empty-SHA1 placeholder (`DA:39:A3:EE:…`) — do not dedupe on fingerprint alone.
-- Optional: `WATCHLIST_RELOAD_SECS` / suppress reload on the same tick to pick up list edits without restart.
 
 ### `/domains-only` (smaller firehose frames)
 
@@ -163,49 +157,45 @@ Matching still sees SANs; you just transfer less JSON per cert.
 |---|---|
 | Catch-up flood | `certstream-init` seeds tip; keep volume; never casual `down -v` |
 | Disconnects | Exponential backoff + jitter; WebSocket ping every 30s |
-| Delivery | At-least-once SQS after successful `SendMessageBatch`; consumer dedupe required |
-| Novelty state | SQLite on durable volume (`NOVELTY_DB`); never `/tmp`; S3 snapshot optional |
-| Disk | `EGRESS=sqs`, `RUST_LOG=warn`, Docker log rotation |
+| Delivery | Local `alerts.jsonl` on durable volume (budget-capped + rotate/gzip) |
+| Novelty state | SQLite on durable volume (`NOVELTY_DB`); never `/tmp`; backup = local file copy / `sqlite3 .backup` |
+| Disk | `EGRESS=novelty`, `RUST_LOG=warn`, Docker log rotation |
 | RAM | ~0.1 GB watchlist (measured) + ~0.5–2 GB CertStream; Oracle 12 GB OK |
 | Dependencies | crates.io only (`deny.toml`); CI runs `cargo deny` + `cargo audit` |
 | Watchlist drift | Optional `WATCHLIST_RELOAD_SECS` |
 
-## Novelty consumer (shoestring)
+## Novelty on the Oracle VM (shoestring)
 
-The edge stays **stateless**. High-signal trickle needs a **durable novelty DB** (first-seen coalitions) on a boot/block volume — **never `/tmp`**. WAL is enabled in [`NoveltyStore`](../src/novelty.rs). See [`SIGNAL.md`](SIGNAL.md#shoestring-persistence-survive-restarts).
+High-signal trickle needs a **durable novelty DB** (first-seen coalitions) on a boot/block volume — **never `/tmp`**. WAL is enabled in [`NoveltyStore`](../src/novelty.rs). With `EGRESS=novelty`, A′ runs **in-process** in the filter binary. See [`SIGNAL.md`](SIGNAL.md#shoestring-persistence-survive-restarts).
 
-**Prefer Compose** (`docker-compose.prod.yml` `novelty` service) when Docker is available. Bare metal:
+**Prefer Compose** (`docker-compose.prod.yml`) when Docker is available. Bare metal:
 
 ```bash
-cargo build --release --bin ct-novelty-consumer
-install -m 755 target/release/ct-novelty-consumer /usr/local/bin/
-install -m 755 deploy/scripts/novelty-s3-snapshot.sh /usr/local/bin/
-install -m 755 deploy/scripts/novelty-s3-restore.sh /usr/local/bin/
-install -m 644 deploy/systemd/ct-novelty-consumer.service /etc/systemd/system/
-install -m 644 deploy/systemd/ct-novelty-snapshot.service /etc/systemd/system/
-install -m 644 deploy/systemd/ct-novelty-snapshot.timer /etc/systemd/system/
-install -m 644 deploy/systemd/ct-novelty.env.example /etc/ct-firehose-filter/novelty.env
-# edit novelty.env: SQS_QUEUE_URL, NOVELTY_S3_URI, NOVELTY_DB, NOVELTY_REQUIRE_DB=1, NOVELTY_TIERS=A
+cargo build --release
+install -m 755 target/release/ct-firehose-filter /usr/local/bin/
+install -m 644 deploy/systemd/ct-firehose-filter.service /etc/systemd/system/
+install -m 644 deploy/systemd/ct-firehose-filter.env.example /etc/ct-firehose-filter/env
+# edit env: EGRESS=novelty, WATCHLIST_FILE, NOVELTY_DB, NOVELTY_REQUIRE_DB, NOVELTY_TIERS=A
 
 mkdir -p /var/lib/ct-firehose-filter
-# First boot: restore snapshot OR deliberately cold-start once with REQUIRE_DB=0, then set =1
-# novelty-s3-restore.sh s3://bucket/ct-firehose/novelty.db
+# First boot: restore a local novelty.db backup OR deliberately cold-start once
+# with REQUIRE_DB=0, then set =1
 
 systemctl daemon-reload
-systemctl enable --now ct-novelty-consumer.service
-systemctl enable --now ct-novelty-snapshot.timer
+systemctl enable --now ct-firehose-filter.service
 ```
 
-`ExecStartPre` refuses to start when `NOVELTY_REQUIRE_DB=1` and the DB file is missing (avoids accidental empty-DB flood).
+`ExecStartPre` (or in-process guard) refuses to start when `NOVELTY_REQUIRE_DB=1` and the DB file is missing (avoids accidental empty-DB flood).
 
-**Never delete `novelty.db` casually.** After a wiped disk, **restore from S3 before** starting with `NOVELTY_REQUIRE_DB=1`. Default alerts are **A′ only** (`NOVELTY_TIERS=A`); B′ stays opt-in.
+**Never delete `novelty.db` casually.** After a wiped disk, **restore a local backup** (file copy or `sqlite3 … '.backup …'`) **before** starting with `NOVELTY_REQUIRE_DB=1`. Default alerts are **A′ only** (`NOVELTY_TIERS=A`); B′ stays opt-in.
+
 ## Host sizing
 
 The 752k watchlist measures on the order of **~100 MiB RSS** ([`SCALE.md`](SCALE.md)). CertStream under load often wants
 another **~0.5–2 GB**. Co-locate only with headroom; otherwise put CertStream on a sibling
 host and set `CERTSTREAM_URL` to that private address (prefer `/domains-only` when possible).
 
-## Live smoke without SQS
+## Live smoke
 
 ```bash
 CERTSTREAM_URL=ws://127.0.0.1:8080/ cargo run --release --example live_smoke -- \
@@ -214,11 +204,13 @@ CERTSTREAM_URL=ws://127.0.0.1:8080/ cargo run --release --example live_smoke -- 
 
 Optional 4th arg (or `DUMP_JSONL=…`) writes every captured match as JSONL for offline review.
 
-Or run the main binary with `EGRESS=stdout`.
+Or run the main binary with `EGRESS=stdout` (local only — never in production).
 
 ## Deferred
 
 Direct RFC6962 / static-CT polling inside this crate, crt.sh warehouse, fingerprint LRU,
 additional egress backends (Kafka/Kinesis/Pub/Sub) — extend `EgressSink` when needed.
 
-**M&A gold extraction:** continuous [`ct-novelty-consumer`](../src/bin/ct-novelty-consumer.rs) with durable SQLite on `/var/lib/ct-firehose-filter/novelty.db` + optional S3 snapshot — see [`SIGNAL.md`](SIGNAL.md). Offline JSONL proof remains [`examples/novelty_replay`](../examples/novelty_replay.rs).
+**M&A gold extraction:** continuous `EGRESS=novelty` with durable SQLite on
+`/var/lib/ct-firehose-filter/novelty.db` + rotated `alerts.jsonl` — see [`SIGNAL.md`](SIGNAL.md).
+Offline JSONL proof remains [`examples/novelty_replay`](../examples/novelty_replay.rs).

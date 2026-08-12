@@ -7,8 +7,8 @@ COPY src ./src
 COPY keywords.txt ./keywords.txt
 COPY suppress.txt ./suppress.txt
 COPY glue.txt ./glue.txt
-RUN cargo build --release --locked --bin ct-firehose-filter --bin ct-novelty-consumer \
-    && strip target/release/ct-firehose-filter target/release/ct-novelty-consumer
+RUN cargo build --release --locked --bin ct-firehose-filter \
+    && strip target/release/ct-firehose-filter
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
@@ -18,7 +18,6 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=builder /app/target/release/ct-firehose-filter /usr/local/bin/ct-firehose-filter
-COPY --from=builder /app/target/release/ct-novelty-consumer /usr/local/bin/ct-novelty-consumer
 # Tiny demo watchlist + default suppress/glue; mount real lists at runtime.
 COPY keywords.txt /app/keywords.txt
 COPY suppress.txt /app/suppress.txt

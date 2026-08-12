@@ -1,6 +1,6 @@
 //! Shared novelty alert processing (A′ coalitions / optional B′ hosts).
 //!
-//! Used by offline `novelty_replay` and the continuous `ct-novelty-consumer`.
+//! Used by offline `novelty_replay` and in-process `EGRESS=novelty`.
 
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,10 +14,36 @@ use crate::novelty::NoveltyStore;
 pub const EMPTY_SHA1_FP: &str = "DA:39:A3:EE:5E:6B:4B:0D:32:55:BF:EF:95:60:18:90:AF:D8:07:09";
 
 const ROUTINE_LEFT: &[&str] = &[
-    "www", "mail", "autodiscover", "cpanel", "webmail", "webdisk", "cpcalendars",
-    "cpcontacts", "ftp", "pop", "imap", "smtp", "ns1", "ns2", "mx", "m", "cdn",
-    "static", "img", "images", "api", "app", "dev", "test", "qa", "staging",
-    "sandbox", "sbx", "graphql", "mcpserver",
+    "www",
+    "mail",
+    "autodiscover",
+    "cpanel",
+    "webmail",
+    "webdisk",
+    "cpcalendars",
+    "cpcontacts",
+    "ftp",
+    "pop",
+    "imap",
+    "smtp",
+    "ns1",
+    "ns2",
+    "mx",
+    "m",
+    "cdn",
+    "static",
+    "img",
+    "images",
+    "api",
+    "app",
+    "dev",
+    "test",
+    "qa",
+    "staging",
+    "sandbox",
+    "sbx",
+    "graphql",
+    "mcpserver",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -212,7 +238,7 @@ pub fn is_routine_host(brand: &str, host: &str) -> bool {
         return true;
     }
     let left = host.split('.').next().unwrap_or("");
-    ROUTINE_LEFT.iter().any(|r| *r == left)
+    ROUTINE_LEFT.contains(&left)
 }
 
 pub fn event_ts(ev: &MatchEvent) -> i64 {

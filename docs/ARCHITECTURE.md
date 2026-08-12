@@ -6,7 +6,7 @@
 match + egress). Do **not** fold matching into the Go CertStream server.
 
 ```text
-Public CT logs  -->  certstream-server-go  --lite WS-->  ct-firehose-filter  -->  stdout|SQS
+Public CT logs  -->  certstream-server-go  --lite WS-->  ct-firehose-filter  -->  stdout|novelty
 ```
 
 ## Why

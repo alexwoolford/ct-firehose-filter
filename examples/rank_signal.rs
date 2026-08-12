@@ -30,11 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let glue_path = env::var("GLUE_FILE")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            env::args()
-                .nth(2)
-                .unwrap_or_else(|| "glue.txt".to_string())
-        });
+        .unwrap_or_else(|| env::args().nth(2).unwrap_or_else(|| "glue.txt".to_string()));
     let sample_n: usize = env::args()
         .nth(3)
         .and_then(|s| s.parse().ok())

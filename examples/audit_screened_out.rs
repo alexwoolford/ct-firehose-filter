@@ -29,9 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let jsonl = env::args()
         .nth(1)
         .unwrap_or_else(|| "/tmp/ct-ma-eval.jsonl".into());
-    let suppress = env::args()
-        .nth(2)
-        .unwrap_or_else(|| "suppress.txt".into());
+    let suppress = env::args().nth(2).unwrap_or_else(|| "suppress.txt".into());
     let glue = env::args().nth(3).unwrap_or_else(|| "glue.txt".into());
     let out_path = env::args()
         .nth(4)
@@ -97,9 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             continue;
         }
-        if brands.len() == 1
-            && top_churn.contains(&brands[0])
-            && high_churn_single.len() < sample_n
+        if brands.len() == 1 && top_churn.contains(&brands[0]) && high_churn_single.len() < sample_n
         {
             high_churn_single.push((brands, ev.matched_domains.clone()));
         }
@@ -143,13 +139,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("top_churn_brands:");
     for (b, c) in churn_brands.iter().take(15) {
         let in_ignore = ignore.contains(b.as_str());
-        println!("  {c:>6}  {b}{}", if in_ignore { "  [suppress/glue]" } else { "" });
+        println!(
+            "  {c:>6}  {b}{}",
+            if in_ignore { "  [suppress/glue]" } else { "" }
+        );
     }
     println!("sample_out:           {out_path}");
     println!();
     println!("verdict_hint:");
     println!("  - fully_ignored multi usually = all brands on suppress/glue (correct drop)");
     println!("  - high_churn single (kenvue/bms/…) is routine infra; keep out of A′");
-    println!("  - scarce-brand B′ (quiet brand + unusual host) is v2, rate-limited — not dump-all-B′");
+    println!(
+        "  - scarce-brand B′ (quiet brand + unusual host) is v2, rate-limited — not dump-all-B′"
+    );
     Ok(())
 }
