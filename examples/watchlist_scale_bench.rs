@@ -14,7 +14,6 @@
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 use std::env;
-use std::process::Command;
 use std::time::Instant;
 
 use ct_firehose_filter::{parse_domain_lines, DomainWatchlist};
@@ -140,6 +139,7 @@ fn rss_mib() -> Option<f64> {
     }
     #[cfg(target_os = "macos")]
     {
+        use std::process::Command;
         let pid = std::process::id().to_string();
         let out = Command::new("ps")
             .args(["-o", "rss=", "-p", &pid])
@@ -151,7 +151,6 @@ fn rss_mib() -> Option<f64> {
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = Command::new("true");
         None
     }
 }
