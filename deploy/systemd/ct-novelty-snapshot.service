@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly S3 snapshot of CT novelty SQLite DB
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ctfilter
+Group=ctfilter
+EnvironmentFile=-/etc/ct-firehose-filter/novelty.env
+Environment=AWS_REGION=us-west-2
+ExecStart=/usr/local/bin/novelty-s3-snapshot.sh

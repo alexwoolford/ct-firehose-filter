@@ -1,0 +1,85 @@
+#cloud-config
+# Bootstrap-only for OCI Always Free Ampere (Oracle Linux 9, aarch64).
+#
+# Prerequisite: VCN must have an Internet Gateway + default route 0.0.0.0/0
+# BEFORE first boot. Without it, dnf/docker.com fail (DNS timeouts) and this
+# script cannot install packages. See docs/DEPLOY.md.
+#
+# Do NOT put AWS keys, SQS URLs, or .env.prod here.
+
+package_update: false
+package_upgrade: false
+
+# Avoid cloud-init's early packages module (runs before network is reliable on
+# fresh VCNs). All installs happen in runcmd with retries.
+
+write_files:
+  - path: /etc/ct-firehose-filter/README
+    permissions: "0644"
+    owner: root:root
+    content: |
+      ct-firehose-filter host bootstrap complete (Docker + dirs).
+
+      Next (as opc; re-login once so docker group applies):
+        git clone https://github.com/alexwoolford/ct-firehose-filter.git
+        # If that URL 404s, scp a local checkout or clone your fork/SSH remote instead.
+        cd ct-firehose-filter
+        cp .env.prod.example .env.prod
+        chmod 600 .env.prod
+        # Edit: SQS_QUEUE_URL, AWS_*, WATCHLIST_HOST_PATH=/var/lib/ct-firehose-filter/domains.txt
+        # Copy full domains.txt to that path (never keywords.txt for SQS; never put secrets in cloud-init).
+        docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up --build -d
+
+      Durable novelty path: /var/lib/ct-firehose-filter/ (never /tmp).
+      First novelty boot: NOVELTY_REQUIRE_DB=0 then flip to 1.
+      See docs/DEPLOY.md and docs/SIGNAL.md.
+
+  - path: /etc/logrotate.d/ct-novelty-alerts
+    permissions: "0644"
+    owner: root:root
+    content: |
+      /var/lib/ct-firehose-filter/alerts.jsonl {
+          weekly
+          rotate 4
+          size 50M
+          missingok
+          notifempty
+          compress
+          delaycompress
+          copytruncate
+      }
+
+  - path: /usr/local/sbin/ct-firehose-bootstrap.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      # Wait for outbound HTTPS (IGW may lag instance metadata).
+      for i in $(seq 1 60); do
+        if curl -fsS --connect-timeout 3 -o /dev/null https://yum.oracle.com/ 2>/dev/null \
+          || curl -fsS --connect-timeout 3 -o /dev/null https://download.docker.com/ 2>/dev/null; then
+          break
+        fi
+        sleep 5
+      done
+      # Ksplice repo baseurls break dnf when DNS is flaky; disable early.
+      dnf config-manager --set-disabled ol9_ksplice 2>/dev/null || true
+      dnf config-manager --set-disabled ol9_ksplice_userspace 2>/dev/null || true
+      dnf config-manager --set-disabled ol9_aarch64_userspace_ksplice 2>/dev/null || true
+      dnf install -y git sqlite logrotate ca-certificates curl jq dnf-plugins-core
+      dnf config-manager --add-repo https://download.docker.com/linux/rhel/docker-ce.repo
+      dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      systemctl enable --now docker
+      mkdir -p /var/lib/ct-firehose-filter
+      chown opc:opc /var/lib/ct-firehose-filter
+      chmod 755 /var/lib/ct-firehose-filter
+      usermod -aG docker opc
+      touch /var/lib/ct-firehose-filter/.bootstrap-complete
+      echo "ct-firehose-filter: Docker bootstrap ready. See /etc/ct-firehose-filter/README" >/etc/motd
+
+runcmd:
+  - [/usr/local/sbin/ct-firehose-bootstrap.sh]
+
+final_message: |
+  ct-firehose-filter cloud-init finished. SSH as opc; re-login for docker group; app stack is NOT started yet.

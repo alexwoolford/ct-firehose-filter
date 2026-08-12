@@ -1,0 +1,15 @@
+{
+  "message_type": "heartbeat",
+  "data": {
+    "timestamp": 1712345678.0,
+    "all_domains": [
+      "decoy-heartbeat.example"
+    ],
+    "leaf_cert": {
+      "all_domains": [
+        "should-not-parse-from-heartbeat.example"
+      ],
+      "fingerprint": "hb"
+    }
+  }
+}

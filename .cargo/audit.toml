@@ -1,0 +1,8 @@
+# cargo-audit config (CI runs `cargo audit`). Mirrors deny.toml advisory ignores for the
+# AWS SDK–pinned rustls-webpki 0.101.7 line; see deny.toml for rationale.
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0104",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+]

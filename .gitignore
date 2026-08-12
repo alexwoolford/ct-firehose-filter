@@ -1,0 +1,31 @@
+/target
+**/*.rs.bk
+.DS_Store
+
+# Secrets and local env (keep *.example tracked)
+.env
+.env.*
+!.env.example
+!.env.prod.example
+
+# Production watchlist — never commit
+domains.txt
+
+# Credentials / keys / OCI local config
+*.pem
+*.key
+credentials
+credentials*
+.oci/
+
+# Local lab / vendored trees (not part of the public mosaic)
+context/
+.vscode/
+.cursor/
+
+# Runtime / novelty artifacts
+*.db
+*.db-wal
+*.db-shm
+alerts.jsonl
+alerts.jsonl.*

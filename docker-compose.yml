@@ -1,0 +1,88 @@
+# Local/dev stack: CertStream fan-in + edge filter with stdout egress (no SQS).
+#
+# First boot automatically seeds CT indexes (certstream-init). Prefer:
+#   docker compose up --build
+#
+# Do NOT casually wipe the data volume — `docker compose down -v` forces a fresh
+# index seed and any gap during downtime is skipped (live tip only).
+#
+# Filter-only against an already-running sidecar:
+#   CERTSTREAM_URL=ws://127.0.0.1:8080/ EGRESS=stdout cargo run --release
+#
+# Production SQS overlay (quiet filter + log rotation inherited):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.prod up --build -d
+# See docs/DEPLOY.md.
+# x-logging: certstream-server-go has no quiet mode; rotate container logs or disk fills.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  certstream-init:
+    image: 0rickyy0/certstream-server-go:v1.9.0
+    container_name: certstream-init
+    user: "0:0"
+    logging: *default-logging
+    volumes:
+      - ./deploy/certstream/config.yml:/etc/certstream/config.yml:ro
+      - ./deploy/certstream/init-create-index.sh:/init-create-index.sh:ro
+      - certstream-data:/data
+    working_dir: /data
+    entrypoint: ["/bin/sh", "/init-create-index.sh"]
+    restart: "no"
+
+  certstream:
+    image: 0rickyy0/certstream-server-go:v1.9.0
+    container_name: certstream-sidecar
+    restart: unless-stopped
+    logging: *default-logging
+    # Image USER is certstreamserver; Docker named volumes are root-owned, so the
+    # non-root user cannot create ct_index.json. Run as root for local compose.
+    user: "0:0"
+    depends_on:
+      certstream-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./deploy/certstream/config.yml:/etc/certstream/config.yml:ro
+      - certstream-data:/data
+    working_dir: /data
+    # Replace image entrypoint so we only pass our config (not /app/config/...).
+    entrypoint: ["/app/certstream-server-go"]
+    command: ["-c", "/etc/certstream/config.yml"]
+
+  filter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ct-firehose-filter
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      certstream:
+        condition: service_started
+    environment:
+      CERTSTREAM_URL: ws://certstream:8080/
+      EGRESS: stdout
+      WATCHLIST_FILE: /data/watchlist.txt
+      SUPPRESS_FILE: /data/suppress.txt
+      GLUE_FILE: /data/glue.txt
+      CHANNEL_CAPACITY: "4096"
+      BATCH_MAX_MESSAGES: "10"
+      FLUSH_INTERVAL_SECS: "5"
+      RECONNECT_DELAY_MS: "2000"
+      RECONNECT_MAX_DELAY_MS: "60000"
+      PROGRESS_INTERVAL_SECS: "30"
+      RUST_LOG: info
+    volumes:
+      # Mount your domain list here (demo keywords.txt by default).
+      - ${WATCHLIST_HOST_PATH:-./keywords.txt}:/data/watchlist.txt:ro
+      - ${SUPPRESS_HOST_PATH:-./suppress.txt}:/data/suppress.txt:ro
+      - ${GLUE_HOST_PATH:-./glue.txt}:/data/glue.txt:ro
+
+volumes:
+  certstream-data:

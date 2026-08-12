@@ -1,0 +1,39 @@
+# certstream-server-go sidecar config (lite stream on :8080).
+# Docs: https://github.com/d-Rickyy-b/certstream-server-go
+#
+# Before first production start, create ct_index.json at current log heads
+# (`certstream-server-go create-index -c config.yml`) so you do not replay history.
+
+webserver:
+  listen_addr: "0.0.0.0"
+  listen_port: 8080
+  real_ip: false
+  full_url: "/full-stream"
+  lite_url: "/"
+  domains_only_url: "/domains-only"
+  cert_path: ""
+  cert_key_path: ""
+  compression_enabled: false
+
+prometheus:
+  enabled: true
+  listen_addr: "0.0.0.0"
+  listen_port: 8080
+  metrics_url: "/metrics"
+  expose_system_metrics: false
+  real_ip: false
+  whitelist:
+    - "127.0.0.1/8"
+    - "::1/128"
+
+general:
+  disable_default_logs: false
+  drop_old_logs: true
+  buffer_sizes:
+    websocket: 300
+    ctlog: 1000
+    broadcastmanager: 10000
+  recovery:
+    enabled: true
+    # Relative to working_dir (/data in compose; /var/lib/certstream-server-go in systemd).
+    ct_index_file: "./ct_index.json"

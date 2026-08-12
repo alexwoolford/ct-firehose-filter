@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly timer for CT novelty S3 snapshot
+
+[Timer]
+OnCalendar=*-*-* 05:15:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

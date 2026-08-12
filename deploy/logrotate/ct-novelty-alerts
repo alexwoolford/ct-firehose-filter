@@ -1,0 +1,17 @@
+# Novelty alerts JSONL rotation (systemd hosts without in-process rotation).
+# Install:
+#   sudo cp deploy/logrotate/ct-novelty-alerts /etc/logrotate.d/ct-novelty-alerts
+#
+# Prefer in-process rotation via NOVELTY_ALERTS_MAX_BYTES (default 50MiB) in
+# ct-novelty-consumer; this is a belt-and-suspenders host policy.
+
+/var/lib/ct-firehose-filter/alerts.jsonl {
+    weekly
+    rotate 4
+    size 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

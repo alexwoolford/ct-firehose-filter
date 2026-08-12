@@ -1,0 +1,21 @@
+[Unit]
+Description=CertStream CT fan-in (certstream-server-go)
+Documentation=https://github.com/d-Rickyy-b/certstream-server-go
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=certstream
+Group=certstream
+WorkingDirectory=/var/lib/certstream-server-go
+ExecStart=/usr/local/bin/certstream-server-go -c /etc/certstream-server-go/config.yml
+Restart=on-failure
+RestartSec=5
+# Chatty stderr (Processed N entries); rely on journald SystemMaxUse= / vacuum — no quiet mode upstream.
+# Needs egress to gstatic.com log list + public CT logs.
+AmbientCapabilities=
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

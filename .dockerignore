@@ -1,0 +1,12 @@
+/target
+.git
+.github
+.cursor
+context
+testdata
+tests
+**/*.md
+!README.md
+agent-transcripts
+*.rs.bk
+.DS_Store
