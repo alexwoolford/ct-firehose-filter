@@ -141,9 +141,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let shutdown_status = shutdown.clone();
         let bind = bind.clone();
         // Fail fast if the port is taken — operators rely on /status for keep-up.
-        let listener = tokio::net::TcpListener::bind(&bind).await.map_err(|e| {
-            format!("STATUS_BIND={bind} listen failed: {e}")
-        })?;
+        let listener = tokio::net::TcpListener::bind(&bind)
+            .await
+            .map_err(|e| format!("STATUS_BIND={bind} listen failed: {e}"))?;
         tracing::info!(%bind, "status server listening (/healthz, /status)");
         tokio::spawn(async move {
             if let Err(err) = serve_status(listener, status_state, shutdown_status).await {
@@ -176,7 +176,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &config.glue_file,
                 policy,
                 config.novelty_require_db,
-            )?;
+            )?
+            .with_metrics(Arc::clone(&metrics));
             tracing::warn!(
                 db = %config.novelty_db.display(),
                 alerts = %config.novelty_alerts.display(),

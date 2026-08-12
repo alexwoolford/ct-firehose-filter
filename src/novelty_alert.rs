@@ -116,10 +116,22 @@ pub struct ProcessStats {
     pub fully_ignored: u64,
     pub alerts_a: u64,
     pub alerts_b: u64,
+    /// First-seen coalition key inserted into SQLite (whether or not emitted).
+    pub coalitions_inserted: u64,
     /// A′ coalitions inserted but not emitted (size > max_coalition_len).
     pub a_oversized_dropped: u64,
     /// A′ coalitions inserted but not emitted (san_count > max_san_count).
     pub a_mega_san_dropped: u64,
+}
+
+/// Leaf SAN count for mega-SAN gating. Prefer inspect-time `san_count`; if unset
+/// (0), fall back to `matched_domains.len()` so the gate cannot be skipped.
+pub fn effective_san_count(ev: &MatchEvent) -> u32 {
+    if ev.san_count > 0 {
+        ev.san_count
+    } else {
+        u32::try_from(ev.matched_domains.len()).unwrap_or(u32::MAX)
+    }
 }
 
 /// Apply suppress/glue filter, update novelty DB, return zero or more alerts.
@@ -143,6 +155,9 @@ pub fn process_match(
     if brands.len() >= 2 {
         let key = brands.join("\u{1f}");
         let is_new = store.insert_coalition(&key, ts)?;
+        if is_new {
+            stats.coalitions_inserted = 1;
+        }
         // Host rows are only needed for Tier B′. Skipping them on A′-only keeps
         // novelty.db from absorbing every brand×host under multi-SAN certs.
         if policy.want_b {
@@ -155,10 +170,7 @@ pub fn process_match(
         if is_new && policy.want_a {
             if brands.len() > policy.max_coalition_len {
                 stats.a_oversized_dropped = 1;
-            } else if policy.max_san_count > 0
-                && ev.san_count > 0
-                && ev.san_count > policy.max_san_count
-            {
+            } else if policy.max_san_count > 0 && effective_san_count(ev) > policy.max_san_count {
                 stats.a_mega_san_dropped = 1;
             } else {
                 stats.alerts_a = 1;
@@ -337,12 +349,7 @@ mod tests {
                 "studio.c.dk".into(),
                 "cust.d.com".into(),
             ],
-            vec![
-                "a.com".into(),
-                "b.jp".into(),
-                "c.dk".into(),
-                "d.com".into(),
-            ],
+            vec!["a.com".into(), "b.jp".into(), "c.dk".into(), "d.com".into()],
             Some(1.0),
             None,
             Some("fp-mega".into()),
@@ -364,12 +371,7 @@ mod tests {
                 "studio.c.dk".into(),
                 "cust.d.com".into(),
             ],
-            vec![
-                "a.com".into(),
-                "b.jp".into(),
-                "c.dk".into(),
-                "d.com".into(),
-            ],
+            vec!["a.com".into(), "b.jp".into(), "c.dk".into(), "d.com".into()],
             Some(2.0),
             None,
             Some("fp-small".into()),
@@ -379,6 +381,40 @@ mod tests {
         assert_eq!(alerts2.len(), 1);
         assert_eq!(s2.alerts_a, 1);
         assert_eq!(s2.a_mega_san_dropped, 0);
+    }
+
+    #[test]
+    fn a_prime_mega_san_falls_back_when_san_count_zero() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore = HashSet::new();
+        let policy = NoveltyPolicy {
+            max_san_count: 32,
+            ..NoveltyPolicy::default()
+        };
+        // san_count unset (0) but many matched_domains — must not skip the gate.
+        let mut domains = vec![
+            "a.com".into(),
+            "b.com".into(),
+            "welcome.a.com".into(),
+            "vpn.b.com".into(),
+        ];
+        for i in 0..40 {
+            domains.push(format!("h{i}.a.com"));
+        }
+        let ev = MatchEvent::new(
+            domains,
+            vec!["a.com".into(), "b.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-zero-san".into()),
+        )
+        .with_san_count(0);
+        assert_eq!(ev.san_count, 0);
+        assert!(effective_san_count(&ev) > 32);
+        let (alerts, s) = process_match(&store, &ignore, &policy, &ev).unwrap();
+        assert!(alerts.is_empty());
+        assert_eq!(s.a_mega_san_dropped, 1);
+        assert_eq!(s.coalitions_inserted, 1);
     }
 
     #[test]

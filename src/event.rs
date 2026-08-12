@@ -12,7 +12,7 @@ pub struct MatchEvent {
     pub fingerprint: Option<String>,
     /// Length of the leaf cert `all_domains` list at inspect time (raw SAN count).
     /// Used to drop Firebase-style mega-SAN packing that only hits a few watchlist brands.
-    /// `0` means unknown (older JSONL / tests); the mega-SAN gate does not apply.
+    /// `0` means unknown (older JSONL); the mega-SAN gate falls back to `matched_domains.len()`.
     #[serde(default)]
     pub san_count: u32,
 }

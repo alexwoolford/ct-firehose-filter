@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
@@ -12,6 +12,7 @@ use crate::alerts_file::{open_append, write_line, AlertsFileConfig};
 use crate::egress::EgressSink;
 use crate::error::EgressError;
 use crate::event::MatchEvent;
+use crate::metrics::PipelineMetrics;
 use crate::novelty::NoveltyStore;
 use crate::novelty_alert::{process_match, NoveltyPolicy};
 use crate::watchlist::load_suppress_and_glue;
@@ -27,6 +28,7 @@ pub struct NoveltySink {
     ignore: HashSet<String>,
     policy: NoveltyPolicy,
     alerts_cfg: AlertsFileConfig,
+    metrics: Option<Arc<PipelineMetrics>>,
 }
 
 impl NoveltySink {
@@ -88,7 +90,15 @@ impl NoveltySink {
             ignore,
             policy,
             alerts_cfg,
+            metrics: None,
         })
+    }
+
+    /// Attach pipeline metrics so A′ funnel counters appear on `/status`.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Arc<PipelineMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 }
 
@@ -112,8 +122,11 @@ impl EgressSink for NoveltySink {
             .map_err(|_| EgressError::Sink("novelty lock poisoned".into()))?;
 
         for ev in items {
-            let (alerts, _) = process_match(&inner.store, &self.ignore, &self.policy, ev)
+            let (alerts, stats) = process_match(&inner.store, &self.ignore, &self.policy, ev)
                 .map_err(|e| EgressError::Sink(e.to_string()))?;
+            if let Some(metrics) = &self.metrics {
+                metrics.record_novelty(&stats);
+            }
             for alert in alerts {
                 let line =
                     serde_json::to_vec(&alert).map_err(|e| EgressError::Sink(e.to_string()))?;
@@ -164,6 +177,7 @@ mod tests {
             gzip_rotated: false,
         };
 
+        let metrics = PipelineMetrics::new();
         let sink = NoveltySink::open_with_cfg(
             &db,
             &alerts,
@@ -173,7 +187,8 @@ mod tests {
             false,
             alerts_cfg,
         )
-        .unwrap();
+        .unwrap()
+        .with_metrics(Arc::clone(&metrics));
 
         let ev = MatchEvent::new(
             vec!["sso.acme.com".into(), "vpn.globex.com".into()],
@@ -189,6 +204,9 @@ mod tests {
         let lines: Vec<_> = body.lines().filter(|l| !l.is_empty()).collect();
         assert_eq!(lines.len(), 1, "renewal must not re-alert");
         assert!(lines[0].contains("acme.com"));
+        let snap = metrics.snapshot();
+        assert_eq!(snap.novelty_alerts_a, 1);
+        assert_eq!(snap.novelty_coalitions_inserted, 1);
         let _ = fs::remove_dir_all(&dir);
     }
 }

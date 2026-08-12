@@ -3,7 +3,9 @@
 //! Intended for Compose port-publish to host loopback (`127.0.0.1:9100`), not public
 //! internet. Pattern mirrors `domain_status`'s status server, kept minimal.
 
-use std::path::PathBuf;
+use std::fs;
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -76,12 +78,30 @@ pub struct StatusResponse {
     pub egress_retries: u64,
     pub frames_per_sec: f64,
     pub matches_per_sec: f64,
+    pub novelty_alerts_a: u64,
+    pub novelty_alerts_b: u64,
+    pub novelty_oversized_dropped: u64,
+    pub novelty_mega_san_dropped: u64,
+    pub novelty_fully_ignored: u64,
+    pub novelty_coalitions_inserted: u64,
+    /// Process-lifetime A′ emit rate (warm tip is typically tens/hour).
+    pub novelty_alerts_per_hour: f64,
+    pub alerts_file_bytes: Option<u64>,
+    pub alerts_file_lines: Option<u64>,
     /// Operator hint: rising `channel_full` means the filter is falling behind.
     pub keep_up: KeepUpHint,
+    /// Product funnel hint (quiet A′ file is often healthy).
+    pub product: ProductHint,
 }
 
 #[derive(Debug, Serialize)]
 pub struct KeepUpHint {
+    pub ok: bool,
+    pub detail: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProductHint {
     pub ok: bool,
     pub detail: &'static str,
 }
@@ -105,6 +125,46 @@ fn keep_up_hint(snap: &MetricsSnapshot, frames_per_sec: f64) -> KeepUpHint {
     }
 }
 
+fn product_hint(snap: &MetricsSnapshot, uptime_secs: f64, egress: &str) -> ProductHint {
+    if egress != "novelty" {
+        return ProductHint {
+            ok: true,
+            detail: "stdout egress — not the product novelty trickle",
+        };
+    }
+    if uptime_secs > 3600.0
+        && snap.matches_enqueued > 1_000
+        && snap.novelty_alerts_a == 0
+        && snap.novelty_coalitions_inserted == 0
+    {
+        return ProductHint {
+            ok: false,
+            detail: "no A′ inserts after 1h with matches — check novelty DB / watchlist / glue",
+        };
+    }
+    ProductHint {
+        ok: true,
+        detail: "warm A′ is tens/hour; tiny alerts.jsonl is expected until 256MiB rotate",
+    }
+}
+
+fn alerts_file_stats(path: &Path) -> (Option<u64>, Option<u64>) {
+    let meta = match fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return (None, None),
+    };
+    let bytes = meta.len();
+    // Cheap enough for shoestring alert files (rotate at 256 MiB).
+    let lines = fs::File::open(path).ok().map(|f| {
+        BufReader::new(f)
+            .lines()
+            .map_while(Result::ok)
+            .filter(|l| !l.is_empty())
+            .count() as u64
+    });
+    (Some(bytes), lines)
+}
+
 fn build_status(state: &StatusState) -> StatusResponse {
     let snap = state.metrics.snapshot();
     let uptime_secs = state.started.elapsed().as_secs_f64();
@@ -118,14 +178,21 @@ fn build_status(state: &StatusState) -> StatusResponse {
         rate.matches_enqueued = snap.matches_enqueued;
         (fps, mps)
     };
+    let novelty_alerts_per_hour = if uptime_secs > 1.0 {
+        (snap.novelty_alerts_a as f64) * 3600.0 / uptime_secs
+    } else {
+        0.0
+    };
+    let (alerts_file_bytes, alerts_file_lines) = state
+        .novelty_alerts
+        .as_ref()
+        .map(|p| alerts_file_stats(p))
+        .unwrap_or((None, None));
     StatusResponse {
         ok: true,
         uptime_secs,
         egress: state.egress.clone(),
-        novelty_db: state
-            .novelty_db
-            .as_ref()
-            .map(|p| p.display().to_string()),
+        novelty_db: state.novelty_db.as_ref().map(|p| p.display().to_string()),
         novelty_alerts: state
             .novelty_alerts
             .as_ref()
@@ -141,7 +208,17 @@ fn build_status(state: &StatusState) -> StatusResponse {
         egress_retries: snap.egress_retries,
         frames_per_sec,
         matches_per_sec,
+        novelty_alerts_a: snap.novelty_alerts_a,
+        novelty_alerts_b: snap.novelty_alerts_b,
+        novelty_oversized_dropped: snap.novelty_oversized_dropped,
+        novelty_mega_san_dropped: snap.novelty_mega_san_dropped,
+        novelty_fully_ignored: snap.novelty_fully_ignored,
+        novelty_coalitions_inserted: snap.novelty_coalitions_inserted,
+        novelty_alerts_per_hour,
+        alerts_file_bytes,
+        alerts_file_lines,
         keep_up: keep_up_hint(&snap, frames_per_sec),
+        product: product_hint(&snap, uptime_secs, &state.egress),
     }
 }
 
@@ -195,6 +272,7 @@ mod tests {
     async fn healthz_and_status_respond() {
         let metrics = PipelineMetrics::new();
         metrics.frames_seen.store(42, Ordering::Relaxed);
+        metrics.novelty_alerts_a.store(3, Ordering::Relaxed);
         let state = StatusState::new(metrics, "novelty", None, None);
         let app = build_router(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -214,18 +292,16 @@ mod tests {
         assert_eq!(client, "ok\n");
         let body = reqwest_get(&format!("http://{addr}/status")).await;
         assert!(body.contains("\"frames_seen\":42"));
+        assert!(body.contains("\"novelty_alerts_a\":3"));
         assert!(body.contains("\"keep_up\""));
+        assert!(body.contains("\"product\""));
         shutdown.cancel();
     }
 
     async fn reqwest_get(url: &str) -> String {
         // Avoid adding reqwest: raw TCP HTTP/1.0 GET.
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let addr = url
-            .trim_start_matches("http://")
-            .split('/')
-            .next()
-            .unwrap();
+        let addr = url.trim_start_matches("http://").split('/').next().unwrap();
         let path = url.split(addr).nth(1).unwrap_or("/");
         let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
         let req = format!("GET {path} HTTP/1.0\r\nHost: {addr}\r\nConnection: close\r\n\r\n");

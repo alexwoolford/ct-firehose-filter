@@ -17,11 +17,46 @@ pub struct PipelineMetrics {
     pub reconnects: AtomicU64,
     pub batches_sent: AtomicU64,
     pub egress_retries: AtomicU64,
+    /// A′ lines written this process (`EGRESS=novelty`).
+    pub novelty_alerts_a: AtomicU64,
+    pub novelty_alerts_b: AtomicU64,
+    pub novelty_oversized_dropped: AtomicU64,
+    pub novelty_mega_san_dropped: AtomicU64,
+    pub novelty_fully_ignored: AtomicU64,
+    /// First-seen coalition keys inserted into `novelty.db` this process.
+    pub novelty_coalitions_inserted: AtomicU64,
 }
 
 impl PipelineMetrics {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    pub fn record_novelty(&self, stats: &crate::novelty_alert::ProcessStats) {
+        if stats.fully_ignored > 0 {
+            self.novelty_fully_ignored
+                .fetch_add(stats.fully_ignored, Ordering::Relaxed);
+        }
+        if stats.alerts_a > 0 {
+            self.novelty_alerts_a
+                .fetch_add(stats.alerts_a, Ordering::Relaxed);
+        }
+        if stats.alerts_b > 0 {
+            self.novelty_alerts_b
+                .fetch_add(stats.alerts_b, Ordering::Relaxed);
+        }
+        if stats.a_oversized_dropped > 0 {
+            self.novelty_oversized_dropped
+                .fetch_add(stats.a_oversized_dropped, Ordering::Relaxed);
+        }
+        if stats.a_mega_san_dropped > 0 {
+            self.novelty_mega_san_dropped
+                .fetch_add(stats.a_mega_san_dropped, Ordering::Relaxed);
+        }
+        if stats.coalitions_inserted > 0 {
+            self.novelty_coalitions_inserted
+                .fetch_add(stats.coalitions_inserted, Ordering::Relaxed);
+        }
     }
 
     pub fn snapshot(&self) -> MetricsSnapshot {
@@ -35,6 +70,12 @@ impl PipelineMetrics {
             reconnects: self.reconnects.load(Ordering::Relaxed),
             batches_sent: self.batches_sent.load(Ordering::Relaxed),
             egress_retries: self.egress_retries.load(Ordering::Relaxed),
+            novelty_alerts_a: self.novelty_alerts_a.load(Ordering::Relaxed),
+            novelty_alerts_b: self.novelty_alerts_b.load(Ordering::Relaxed),
+            novelty_oversized_dropped: self.novelty_oversized_dropped.load(Ordering::Relaxed),
+            novelty_mega_san_dropped: self.novelty_mega_san_dropped.load(Ordering::Relaxed),
+            novelty_fully_ignored: self.novelty_fully_ignored.load(Ordering::Relaxed),
+            novelty_coalitions_inserted: self.novelty_coalitions_inserted.load(Ordering::Relaxed),
         }
     }
 }
@@ -50,6 +91,12 @@ pub struct MetricsSnapshot {
     pub reconnects: u64,
     pub batches_sent: u64,
     pub egress_retries: u64,
+    pub novelty_alerts_a: u64,
+    pub novelty_alerts_b: u64,
+    pub novelty_oversized_dropped: u64,
+    pub novelty_mega_san_dropped: u64,
+    pub novelty_fully_ignored: u64,
+    pub novelty_coalitions_inserted: u64,
 }
 
 /// Emit a progress line on an interval until cancelled.
@@ -75,6 +122,10 @@ pub async fn run_progress_logger(
                     reconnects = s.reconnects,
                     batches_sent = s.batches_sent,
                     egress_retries = s.egress_retries,
+                    novelty_alerts_a = s.novelty_alerts_a,
+                    novelty_oversized_dropped = s.novelty_oversized_dropped,
+                    novelty_mega_san_dropped = s.novelty_mega_san_dropped,
+                    novelty_coalitions_inserted = s.novelty_coalitions_inserted,
                     "pipeline progress"
                 );
             }

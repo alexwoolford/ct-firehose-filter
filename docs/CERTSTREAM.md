@@ -132,6 +132,17 @@ curl -s http://127.0.0.1:9100/status | jq .
 
 Bind inside the container is `STATUS_BIND=0.0.0.0:9100` (required for port publish). Host publish is `127.0.0.1:9100:9100`. Set `STATUS_BIND=` empty / `off` to disable the server (e.g. local stdout smokes). Do **not** open `9100` on the Oracle NSG.
 
+**Quiet `alerts.jsonl` is usually healthy.** Warm Tier A′ is typically **tens of alerts per hour** (overnight tens of KB is normal). One live file until **256 MiB** rotate (`NOVELTY_ALERTS_MAX_BYTES`); check `ls /var/lib/ct-firehose-filter/alerts*` before assuming data loss. Tiny size alone ≠ stall — use `/status`:
+
+| Field | Healthy | Problem |
+|---|---|---|
+| `keep_up.ok` / `channel_full` | true / 0 | rising `channel_full` or flat `frames_seen` |
+| `novelty_alerts_per_hour` | ~10–50 after warm-up | 0 for hours while `matches_enqueued` climbs |
+| `novelty_oversized_dropped` / `novelty_mega_san_dropped` | can be ≫ alerts | (gates working — not a failure) |
+| `alerts_file_bytes` | grows slowly | only one live file until rotate |
+
+`/status` also exposes `novelty_alerts_a`, `novelty_coalitions_inserted`, `alerts_file_lines`, and a `product` hint.
+
 ## Cheap continuous host (US, under ~$10/mo)
 
 Preferred production shape for months-long unattended runs near Colorado:

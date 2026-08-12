@@ -44,8 +44,8 @@ pub use keywords::{FileKeywordSource, KeywordSource, MemoryKeywordSource};
 pub use metrics::{MetricsSnapshot, PipelineMetrics};
 pub use novelty::NoveltyStore;
 pub use novelty_alert::{
-    dedupe_key, filter_brands, process_match, NoveltyAlert, NoveltyPolicy, ProcessStats,
-    EMPTY_SHA1_FP,
+    dedupe_key, effective_san_count, filter_brands, process_match, NoveltyAlert, NoveltyPolicy,
+    ProcessStats, EMPTY_SHA1_FP,
 };
 pub use novelty_sink::{default_novelty_alerts, default_novelty_db, NoveltySink};
 pub use parse::{parse_certstream_frame, LeafDomains};
@@ -54,7 +54,8 @@ pub use pipeline::{
     DEFAULT_CHANNEL_CAPACITY,
 };
 pub use status::{
-    build_router, run_status_server, serve_status, KeepUpHint, StatusResponse, StatusState,
+    build_router, run_status_server, serve_status, KeepUpHint, ProductHint, StatusResponse,
+    StatusState,
 };
 pub use watchlist::{
     load_domain_file, load_suppress_and_glue, load_suppress_file, parse_domain_lines,

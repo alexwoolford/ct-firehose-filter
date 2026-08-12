@@ -96,8 +96,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.
 
 Prod overlay sets `EGRESS=novelty`, `RUST_LOG=warn`, `WATCHLIST_MIN_LEN=100000`,
 Docker log rotation (`10m` × 3), and alert chunk/budget caps (256 MiB chunks, 20 GiB total, gzip).
-Output: `/var/lib/ct-firehose-filter/alerts.jsonl` (+ rotated `.gz` siblings) and `novelty.db`.
-Keep-up: `curl -s http://127.0.0.1:9100/status | jq` (loopback publish only — see [`CERTSTREAM.md`](docs/CERTSTREAM.md#keep-up-visibility-are-we-behind-certstream)).
+Output: `/var/lib/ct-firehose-filter/alerts.jsonl` (+ rotated `.gz` siblings after **256 MiB**) and `novelty.db`.
+Warm A′ is typically **tens of alerts/hour** — overnight tens of KB is expected, not a stall.
+Keep-up + novelty funnel: `curl -s http://127.0.0.1:9100/status | jq` (loopback only — see [`CERTSTREAM.md`](docs/CERTSTREAM.md#keep-up-visibility-are-we-behind-certstream)).
 Full checklist: [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md#quiet-production-checklist).
 
 | `EGRESS` | Meaning |
