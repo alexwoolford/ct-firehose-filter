@@ -140,9 +140,9 @@ Bind inside the container is `STATUS_BIND=0.0.0.0:9100` (required for port publi
 | `keep_up.ok` / `channel_full` | true / 0 | rising `channel_full` or flat `frames_seen` |
 | `novelty_alerts_per_hour` | ~10–50 after warm-up | 0 for hours while `matches_enqueued` climbs |
 | `novelty_oversized_dropped` / `novelty_mega_san_dropped` | can be ≫ alerts | (gates working — not a failure) |
-| `alerts_file_bytes` | grows slowly | only one live file until rotate |
+| `alerts_file_bytes` / `alerts_file_lines` | tracks `novelty_alerts_a` over time | **diverges** while `novelty_alerts_a` climbs — path replaced under open fd (e.g. `vim` rewrite). Recreate filter; do **not** edit the live file in place |
 
-`/status` also exposes `novelty_alerts_a`, `novelty_coalitions_inserted`, `alerts_file_lines`, and a `product` hint.
+**Do not edit** `/var/lib/ct-firehose-filter/alerts.jsonl` while the filter is running (`vim`/`mv` replaces the inode; the process keeps writing to the deleted backup). Copy out for reading (`scp`); truncate/replace only after stopping or recreating the container.
 
 ## Cheap continuous host (US, under ~$10/mo)
 
