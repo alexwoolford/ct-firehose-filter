@@ -51,12 +51,23 @@ const ROUTINE_LEFT: &[&str] = &[
 pub struct NoveltyAlert {
     /// Join key with research archive lines (`MATCH_ARCHIVE_SCHEMA_VERSION`).
     pub schema_version: u32,
-    pub tier: &'static str,
-    pub coalition: Option<Vec<String>>,
-    pub brand: Option<String>,
-    pub host: Option<String>,
-    pub novel_hosts: Option<Vec<String>>,
+    #[serde(flatten)]
+    pub kind: NoveltyKind,
     pub event: MatchEvent,
+}
+
+/// Tier-specific payload. Serialized with `tier` tag — A′ and B′ never share null keys.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "tier")]
+pub enum NoveltyKind {
+    #[serde(rename = "A")]
+    A { coalition: Vec<String> },
+    #[serde(rename = "B")]
+    B {
+        brand: String,
+        host: String,
+        novel_hosts: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -179,11 +190,7 @@ pub fn process_match(
                 stats.alerts_a = 1;
                 alerts.push(NoveltyAlert {
                     schema_version: MATCH_ARCHIVE_SCHEMA_VERSION,
-                    tier: "A",
-                    coalition: Some(brands),
-                    brand: None,
-                    host: None,
-                    novel_hosts: None,
+                    kind: NoveltyKind::A { coalition: brands },
                     event: ev.clone(),
                 });
             }
@@ -210,13 +217,17 @@ pub fn process_match(
     }
     if !novel_interesting.is_empty() {
         stats.alerts_b = 1;
+        let host = novel_interesting
+            .first()
+            .cloned()
+            .expect("novel_interesting non-empty");
         alerts.push(NoveltyAlert {
             schema_version: MATCH_ARCHIVE_SCHEMA_VERSION,
-            tier: "B",
-            coalition: None,
-            brand: Some(brand),
-            host: novel_interesting.first().cloned(),
-            novel_hosts: Some(novel_interesting),
+            kind: NoveltyKind::B {
+                brand,
+                host,
+                novel_hosts: novel_interesting,
+            },
             event: ev.clone(),
         });
     }
@@ -446,5 +457,43 @@ mod tests {
         let (coalitions, hosts) = store.counts().unwrap();
         assert_eq!(coalitions, 1);
         assert_eq!(hosts, 0);
+    }
+
+    #[test]
+    fn a_prime_json_omits_b_fields() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore = HashSet::new();
+        let policy = NoveltyPolicy::default();
+        let ev = MatchEvent::new(
+            vec!["sso.a.com".into(), "vpn.b.com".into()],
+            vec!["a.com".into(), "b.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-ser".into()),
+        )
+        .with_san_count(2);
+        let (alerts, _) = process_match(&store, &ignore, &policy, &ev).unwrap();
+        assert_eq!(alerts.len(), 1);
+        let json = serde_json::to_string(&alerts[0]).unwrap();
+        assert!(json.contains(r#""tier":"A""#), "{json}");
+        assert!(json.contains(r#""coalition""#), "{json}");
+        assert!(
+            !json.contains(r#""brand""#),
+            "A′ must not serialize brand: {json}"
+        );
+        assert!(
+            !json.contains(r#""host""#),
+            "A′ must not serialize host: {json}"
+        );
+        assert!(
+            !json.contains(r#""novel_hosts""#),
+            "A′ must not serialize novel_hosts: {json}"
+        );
+        assert!(
+            !json.contains(r#""brand":null"#)
+                && !json.contains(r#""host":null"#)
+                && !json.contains(r#""novel_hosts":null"#),
+            "A′ must not emit null B′ placeholders: {json}"
+        );
     }
 }

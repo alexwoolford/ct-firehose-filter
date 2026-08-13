@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use ct_firehose_filter::{
     dedupe_key, load_suppress_and_glue, open_alerts_append, process_match, write_alerts_line,
-    AlertsFileConfig, MatchEvent, NoveltyPolicy, NoveltyStore,
+    AlertsFileConfig, MatchEvent, NoveltyKind, NoveltyPolicy, NoveltyStore,
 };
 
 const DEFAULT_NOVELTY_DB_PROD: &str = "/var/lib/ct-firehose-filter/novelty.db";
@@ -122,10 +122,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for alert in &new_alerts {
             let body = serde_json::to_vec(alert)?;
             write_alerts_line(&alerts_cfg, &mut alerts, &body)?;
-            if alert.tier == "A" && sample_a < 12 {
-                sample_a += 1;
-                if let Some(c) = &alert.coalition {
-                    eprintln!("A′ #{sample_a}  {}", c.join(" + "));
+            if let NoveltyKind::A { coalition } = &alert.kind {
+                if sample_a < 12 {
+                    sample_a += 1;
+                    eprintln!("A′ #{sample_a}  {}", coalition.join(" + "));
                 }
             }
         }

@@ -158,15 +158,17 @@ cargo run --release --example novelty_replay -- \
 
 ### `alerts.jsonl` shape (`NoveltyAlert`)
 
+Tagged enum envelope — A′ and B′ do not share null placeholders.
+
 | Field | Meaning |
 |---|---|
 | `schema_version` | `1` — join key with archive lines (`MATCH_ARCHIVE_SCHEMA_VERSION`). **Always present on new writes**; lines from before the archive cutover may omit it |
-| `tier` | `"A"` or `"B"` |
-| `coalition` | Sorted brands (A′); null on B′ |
-| `brand` / `host` / `novel_hosts` | B′ fields; null on A′ |
+| `tier` | `"A"` or `"B"` (serde tag) |
+| `coalition` | Present on **A′ only** — sorted brands |
+| `brand` / `host` / `novel_hosts` | Present on **B′ only** (opt-in `NOVELTY_TIERS`) |
 | `event` | Nested `MatchEvent` (`matched_domains`, `matched_keywords`, `seen`, `source`, `fingerprint`, `san_count`) |
 
-Join alert → archive / crt.sh via `event.fingerprint` (soft join; no separate `event_id`). Alerts stay thin — full SAN lists live in `archive/matches.jsonl`.
+Absent keys mean “not this tier,” not null. Join alert → archive / crt.sh via `event.fingerprint` (soft join; no separate `event_id`). Alerts stay thin — full SAN lists live in `archive/matches.jsonl`.
 
 **Retention:** A′ **payloads** in `alerts.jsonl` rotate at 256 MiB and prune when live+archives exceed **20 GiB** — you can lose old alert lines while `novelty.db` still remembers the coalition key. Back up JSONL if you need a durable alert history for customers or case studies.
 

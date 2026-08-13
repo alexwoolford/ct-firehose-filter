@@ -37,11 +37,14 @@ Each JSONL line:
 
 ### `alerts.jsonl` (`NoveltyAlert`) — product lines
 
+Tagged enum (`tier` discriminant). A′ and B′ keys are **not** written as null on the other tier.
+
 | Field | Meaning |
 |---|---|
 | `schema_version` | `1` — same constant as archive; **always written by current builds**. Older alert lines (pre-archive cutover) may omit it |
 | `tier` | `"A"` (prod) or `"B"` (opt-in) |
-| `coalition` / `brand` / `host` / `novel_hosts` | A′ vs B′ payload |
+| `coalition` | A′ only — sorted brands |
+| `brand` / `host` / `novel_hosts` | B′ only |
 | `event` | Nested `MatchEvent` (matched hits, `fingerprint`, `seen`, `source`, `san_count`) — **not** full `all_domains` |
 
 **Join:** `event.fingerprint` ↔ archive `fingerprint` (and crt.sh SHA-1). No separate `event_id`.
