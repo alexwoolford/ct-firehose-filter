@@ -195,56 +195,12 @@ pub fn open_append(cfg: &AlertsFileConfig) -> std::io::Result<BufWriter<File>> {
     Ok(BufWriter::new(f))
 }
 
-/// True when `writer`'s open inode still matches `cfg.path` on disk.
-///
-/// Editors (vim) often replace the path with a new inode while the process keeps
-/// writing to the old fd (`alerts.jsonl~ (deleted)`). `/status` reads the path, so
-/// metrics climb while the visible file freezes — reopen when they diverge.
-fn writer_follows_path(cfg: &AlertsFileConfig, writer: &BufWriter<File>) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let Ok(open_meta) = writer.get_ref().metadata() else {
-            return false;
-        };
-        let Ok(path_meta) = fs::metadata(&cfg.path) else {
-            return false;
-        };
-        open_meta.dev() == path_meta.dev() && open_meta.ino() == path_meta.ino()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (cfg, writer);
-        true
-    }
-}
-
-/// If the path was replaced under our feet, flush and reopen by path.
-fn ensure_writer_follows_path(
-    cfg: &AlertsFileConfig,
-    writer: &mut BufWriter<File>,
-) -> std::io::Result<()> {
-    if writer_follows_path(cfg, writer) {
-        return Ok(());
-    }
-    tracing::warn!(
-        path = %cfg.path.display(),
-        "alerts.jsonl path no longer matches open fd (replaced under process?); reopening"
-    );
-    let _ = writer.flush();
-    *writer = open_append(cfg)?;
-    Ok(())
-}
-
 /// Write one JSON line; rotate + reopen if the live file crossed `max_bytes`.
-///
-/// Also reopens if an editor replaced `cfg.path` under the open fd (inode mismatch).
 pub fn write_line(
     cfg: &AlertsFileConfig,
     writer: &mut BufWriter<File>,
     line: &[u8],
 ) -> std::io::Result<()> {
-    ensure_writer_follows_path(cfg, writer)?;
     writer.write_all(line)?;
     writer.write_all(b"\n")?;
     writer.flush()?;
@@ -345,39 +301,6 @@ mod tests {
             })
             .count();
         assert_eq!(plain, 1);
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn write_line_reopens_after_path_replaced_under_fd() {
-        let dir = temp_dir("inode");
-        let path = dir.join("alerts.jsonl");
-        let cfg = AlertsFileConfig {
-            path: path.clone(),
-            max_bytes: 10_000_000,
-            max_total_bytes: 10_000_000,
-            gzip_rotated: false,
-        };
-        let mut writer = open_append(&cfg).unwrap();
-        write_line(&cfg, &mut writer, br#"{"tier":"A"}"#).unwrap();
-
-        // Simulate vim: rename open file aside, create a new path inode.
-        let backup = dir.join("alerts.jsonl~");
-        fs::rename(&path, &backup).unwrap();
-        fs::write(&path, "").unwrap();
-
-        assert!(
-            !writer_follows_path(&cfg, &writer),
-            "open fd should no longer match path inode"
-        );
-        write_line(&cfg, &mut writer, br#"{"tier":"A","n":2}"#).unwrap();
-        assert!(writer_follows_path(&cfg, &writer));
-
-        let live = fs::read_to_string(&path).unwrap();
-        assert!(
-            live.contains(r#""n":2"#),
-            "line after reopen must land on visible path, got: {live:?}"
-        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
