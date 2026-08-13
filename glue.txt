@@ -51,3 +51,9 @@ erinapp.com
 
 # ITSM / helpdesk SaaS hubs
 mtrtml.com
+
+# Vertical website / digital retailing platforms (customer sites on vendor certs)
+dealer.com
+
+# Contractor / solar online-estimate SaaS (unrelated installers co-named)
+demand-iq.com

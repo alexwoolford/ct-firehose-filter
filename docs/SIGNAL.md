@@ -101,7 +101,7 @@ Gold is not in reading 268k lines. Rank downstream:
 
 **Strip lists (one strip set at runtime; two files for ops only):**
 - [`suppress.txt`](../suppress.txt) — **mega-apex / infra volume** (AWS, Google, … still on `domains.txt`, stripped at egress)
-- [`glue.txt`](../glue.txt) — **platform / co-tenant glue** (ESP/WAF/DAM/CRS/WP/HR-referral/ITSM that forge fake multi-brand SANs)
+- [`glue.txt`](../glue.txt) — **platform / co-tenant glue** (ESP/WAF/DAM/CRS/WP/HR-referral/ITSM/vertical website & estimate SaaS that forge fake multi-brand SANs)
 
 `load_suppress_and_glue` concatenates both into **one** ignore `HashSet` — putting a name in either file has identical strip semantics. Keep two files so glue mining/churn does not muddy the stable mega-apex list. Keep corporate families out of either file.
 
@@ -128,7 +128,7 @@ cargo run --release --example mine_glue -- \
   /tmp/ct-ma-eval.jsonl suppress.txt 40
 ```
 
-**Glue method:** rank brands on multi-keyword certs by distinct co-brand partners × log(events). Promote only clear multi-tenant **vendor apexes** (ESP/WAF/DAM/CRS/privacy/HR-referral/ITSM helpdesk SaaS) when that hub appears on the cert. Leave corporate families (`optum`+`uhc`, `westpac`+`stgeorge`, …) out. Do not hard-filter host labels like `referrals` / `helpdesk` alone (true families share staging hosts too). Example [`glue.txt`](../glue.txt) includes `mailchimp.com`, `highq.com`, `erinapp.com`, `mtrtml.com`, plus IR/WP hubs.
+**Glue method:** rank brands on multi-keyword certs by distinct co-brand partners × log(events). Promote only clear multi-tenant **vendor apexes** (ESP/WAF/DAM/CRS/privacy/HR-referral/ITSM helpdesk/vertical website CMS/online-estimate SaaS) when that hub appears on the cert. Examples: `dealer.com` (Cox Automotive dealership sites), `demand-iq.com` (contractor estimate funnels). Leave corporate families (`optum`+`uhc`, `westpac`+`stgeorge`, …) out. Do **not** auto-strip scarce B2B commercial co-names (e.g. airline×ancillary platform) or hard-filter host labels like `referrals` / `helpdesk` / `estimate` alone (true families share staging hosts too). Example [`glue.txt`](../glue.txt) includes `mailchimp.com`, `highq.com`, `erinapp.com`, `mtrtml.com`, `dealer.com`, `demand-iq.com`, plus IR/WP hubs.
 **Read the `rank_signal` tiers carefully:** on a *cold* dump, Tier B looks huge because every host is “first seen.” Durable novelty (SQLite on brand-pairs and hosts) is what turns *pair* renewals quiet; tip CT still mints many unique hosts, so **human ops should start with novelty A′ only**.
 
 Avoid: volume-based brand suppress, `vpn`/`sso`/`merge` hard filters, fuzzy SLD matching.
