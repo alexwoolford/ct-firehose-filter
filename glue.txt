@@ -45,3 +45,9 @@ notified.com
 sqwadhq.com
 craftpeak.com
 voyav.com
+
+# HR / employee-referral SaaS (customers co-named on vendor certs)
+erinapp.com
+
+# ITSM / helpdesk SaaS hubs
+mtrtml.com
