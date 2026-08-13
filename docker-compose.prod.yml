@@ -37,7 +37,7 @@ services:
       NOVELTY_ALERTS: /var/lib/ct-firehose-filter/alerts.jsonl
       # First boot: leave 0 to create DB; then flip to 1 once healthy.
       NOVELTY_REQUIRE_DB: ${NOVELTY_REQUIRE_DB:-0}
-      NOVELTY_TIERS: A
+      NOVELTY_TIERS: ${NOVELTY_TIERS:-A}
       NOVELTY_MAX_COALITION: ${NOVELTY_MAX_COALITION:-5}
       # Chunk + total budget (multi-year headroom on ~200GB boot volume).
       NOVELTY_ALERTS_MAX_BYTES: ${NOVELTY_ALERTS_MAX_BYTES:-268435456}
