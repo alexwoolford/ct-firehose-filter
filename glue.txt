@@ -57,3 +57,15 @@ dealer.com
 
 # Contractor / solar online-estimate SaaS (unrelated installers co-named)
 demand-iq.com
+
+# Managed file transfer SaaS (customer.*files.com packing)
+files.com
+
+# Publisher deals / commerce marketplace (StackCommerce)
+stacksocial.com
+
+# Ecommerce CMS tenant hosts
+dynamicweb-cms.com
+
+# Open-innovation SaaS (customer open-innovation portals on vendor certs)
+hypeinnovation.com

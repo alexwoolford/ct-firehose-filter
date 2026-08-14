@@ -30,6 +30,44 @@ watchlist match (enqueue)
 
 CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev research and Neo4j relationship demos; dangerous if oversold as a trading feed.
 
+## What A′ actually is (streams honesty)
+
+**There is one product alert file.** Prod `alerts.jsonl` is untagged A′ only (`tier:"A"`). It is **not** split into family vs vendor streams, and lines are **not** labeled with a relation type.
+
+| Thing | Where it lives | Distinguishable? |
+|---|---|---|
+| **A′ alerts** | `novelty.db` + `alerts.jsonl` | Untagged novel multi-brand coalitions after strip |
+| **Glue hubs** | Stripped before A′ via [`glue.txt`](../glue.txt) | Not an alert type — removes high-fan-out platforms from the diligence feed |
+| **Mega-apex suppress** | Same strip set via [`suppress.txt`](../suppress.txt) | Volume drop (near-zero-info infra) |
+| **Research archive** | `archive/matches.jsonl` | Post-strip enqueue + full `all_domains` ([`ARCHIVE.md`](ARCHIVE.md)) |
+
+Family-looking pairs (Optum×UHC) and scarce vendor-looking pairs (Gilead×Honeywell) **both land in the same `alerts.jsonl`** today. Glue hubs (dealer.com, files.com, Automattic, …) do **not** — they are stripped so A′ is not flooded with commodity SaaS co-tenants. That strip is for **diligence SNR**, not a claim that platform edges are worthless.
+
+**Interestingness ≈ improbability, by use-case:** A′ values rare coalitions; platform penetration values hub×customer counts over time (recoverable from archive — see below); mega-apex suppress is near-zero information either way.
+
+### Cold start: family vs vendor at first sight
+
+**You cannot reliably classify family vs vendor at runtime on the first observation.** First-seen A′ only means: this coalition key is new after strip. That is a **hypothesis / diligence lead**, not an equity-proven or vendor-proven relationship.
+
+| Signal at t=0 | Useful? | Failure mode |
+|---|---|---|
+| Host tokens (`iscnexusdev`, `estimate.`, `helpdesk.`) | Weak hint | True families share staging/helpdesk hosts |
+| Industry distance | Weak / harmful | Real deals are often cross-sector |
+| Partner fan-out | Strong for **platforms** | Unavailable on the first hit |
+| Ownership / subsidiary graph | Strong for **family** | Not in this binary today |
+
+**New vendor problem:** the first customers of a new SaaS look like scarce/interesting relationships. Only after unrelated partner fan-out accumulates is the hub obviously glue. A rule “unknown → family” would mis-label emerging platforms as equity signal.
+
+**Chosen handling (posterior, not first-fire):**
+
+1. **Emit unlabeled A′** — novel multi-brand co-occurrence.
+2. **Promote platforms later** — `mine_glue` on the archive → human review → add hub to [`glue.txt`](../glue.txt) → future A′ quiets. Early false A′ lines for that hub are accepted cold-start debt.
+3. **Confirm family later** — ownership overlay (deferred); not inventable from CT alone on day one.
+4. **Scarce vendor** — what stays rare after glue promotions and without an ownership link (Gilead×Honeywell class). A separate V′ stream is deferred until labels exist.
+5. **Do not auto-glue** on the first weird cross-sector pair.
+
+[`glue.txt`](../glue.txt) means “hubs we refuse to treat as A′ equity,” not “meaningless.” Dealer.com / WordPress / Files.com edges remain useful for **platform penetration** research via the archive.
+
 ## What the edge achieved (pre-novelty tip eval)
 
 Numbers below are from the **raw 15m MatchEvent dump** before in-process novelty shipped. They explain why A′ was required — not the current prod posture.
@@ -101,7 +139,7 @@ Gold is not in reading 268k lines. Rank downstream:
 
 **Strip lists (one strip set at runtime; two files for ops only):**
 - [`suppress.txt`](../suppress.txt) — **mega-apex / infra volume** (AWS, Google, … still on `domains.txt`, stripped at egress)
-- [`glue.txt`](../glue.txt) — **platform / co-tenant glue** (ESP/WAF/DAM/CRS/WP/HR-referral/ITSM/vertical website & estimate SaaS that forge fake multi-brand SANs)
+- [`glue.txt`](../glue.txt) — **high-fan-out platform glue** (ESP/WAF/DAM/CRS/MFT/deals/CMS/HR/ITSM/vertical website & estimate SaaS — not scarce vendor–customer pairs)
 
 `load_suppress_and_glue` concatenates both into **one** ignore `HashSet` — putting a name in either file has identical strip semantics. Keep two files so glue mining/churn does not muddy the stable mega-apex list. Keep corporate families out of either file.
 
@@ -128,7 +166,7 @@ cargo run --release --example mine_glue -- \
   /tmp/ct-ma-eval.jsonl suppress.txt 40
 ```
 
-**Glue method:** rank brands on multi-keyword certs by distinct co-brand partners × log(events). Promote only clear multi-tenant **vendor apexes** (ESP/WAF/DAM/CRS/privacy/HR-referral/ITSM helpdesk/vertical website CMS/online-estimate SaaS) when that hub appears on the cert. Examples: `dealer.com` (Cox Automotive dealership sites), `demand-iq.com` (contractor estimate funnels). Leave corporate families (`optum`+`uhc`, `westpac`+`stgeorge`, …) out. Do **not** auto-strip scarce B2B commercial co-names (e.g. airline×ancillary platform) or hard-filter host labels like `referrals` / `helpdesk` / `estimate` alone (true families share staging hosts too). Example [`glue.txt`](../glue.txt) includes `mailchimp.com`, `highq.com`, `erinapp.com`, `mtrtml.com`, `dealer.com`, `demand-iq.com`, plus IR/WP hubs.
+**Glue method:** rank brands on multi-keyword certs by distinct co-brand partners × log(events). Promote only **high-fan-out commodity platforms** after posterior evidence (not on first weird pair) — ESP/WAF/DAM/CRS/MFT/deals/CMS/HR/ITSM/vertical website/estimate SaaS — e.g. `files.com`, `stacksocial.com`, `dynamicweb-cms.com`, `hypeinnovation.com`, `dealer.com`, `demand-iq.com`. Leave corporate families and scarce B2B co-names alone. Do not hard-filter host labels. A′ lines stay unlabeled (family vs vendor is not decided at emit time).
 **Read the `rank_signal` tiers carefully:** on a *cold* dump, Tier B looks huge because every host is “first seen.” Durable novelty (SQLite on brand-pairs and hosts) is what turns *pair* renewals quiet; tip CT still mints many unique hosts, so **human ops should start with novelty A′ only**.
 
 Avoid: volume-based brand suppress, `vpn`/`sso`/`merge` hard filters, fuzzy SLD matching.

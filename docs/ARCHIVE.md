@@ -16,9 +16,19 @@ Do **not** confuse these with novelty **A′ / B′** alerts ([`SIGNAL.md`](SIGN
 
 | Stream | Path | Role |
 |---|---|---|
-| **Product (A′)** | `novelty.db` + `alerts.jsonl` | Human / eventual customer first-seen multi-brand feed |
+| **Product (A′)** | `novelty.db` + `alerts.jsonl` | Untagged first-seen multi-brand diligence leads (family and scarce vendor mixed; not equity-proven) |
 | **Research archive** | `ARCHIVE_DIR/matches.jsonl` (+ `.*.gz`) | Every **enqueued** match + full SAN list (includes single-brand; **not** a B′ feed) |
 | **Config provenance** | `ARCHIVE_DIR/config_snapshots/<id>/` | Watchlist / suppress / glue copies + `meta.json` |
+
+### Platform hubs after glue strip (penetration research)
+
+`matched_keywords` / `matched_domains` are **post** suppress+glue strip, so a glued hub (e.g. `dealer.com`) usually disappears from those fields. The leaf’s full SAN list is still in **`all_domains`**, so hub×customer edges remain recoverable offline:
+
+1. Load known hubs from [`glue.txt`](../glue.txt) (and/or suppress).
+2. For each archive line, scan `all_domains` for hostnames under a hub apex.
+3. Pair with remaining watchlist brands on that leaf (or other customer-shaped SANs) for penetration / first-seen customer studies.
+
+**Limit:** if every implicated watchlist name was glue/suppress, the leaf is `fully_suppressed` and **never enqueued** — those glue-only packs are not in the archive. A′ itself never emits hub×customer once the hub is glued (by design for diligence SNR). See also cold-start / posterior glue in [`SIGNAL.md`](SIGNAL.md#what-a-actually-is-streams-honesty).
 
 ## Schema v1 (`MatchArchiveEvent`)
 
