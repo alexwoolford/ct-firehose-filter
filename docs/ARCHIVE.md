@@ -71,6 +71,8 @@ Tagged enum (`tier` discriminant). A′ and B′ keys are **not** written as nul
 **No total-byte prune** on the archive (unlike product `alerts.jsonl`). Plan off-box copy
 before the boot volume fills; budget ~0.5–3 GB/day compressed if SAN lists are large.
 
+**Always Free (~30 GiB root) ops:** after ~10 days of tip capture the archive dir is often **~1–2 GiB** while the root FS may already sit near **~75%+** (OS + Docker + images). `/status` `archive_disk_warn` only trips at `ARCHIVE_DISK_WARN_BYTES` (default **100 GiB**) — that is **not** a host-disk guard on a small boot volume. Watch `df -h /` yourself. When free space is tight: `scp`/`rsync` sealed `matches.jsonl.*.gz` off-box, then delete the copies on the VM (keep recent gz + live file + `config_snapshots/`). Do **not** delete `novelty.db` or the live `alerts.jsonl` as “cleanup.”
+
 ## Ops
 
 ```bash

@@ -69,3 +69,27 @@ dynamicweb-cms.com
 
 # Open-innovation SaaS (customer open-innovation portals on vendor certs)
 hypeinnovation.com
+
+# Status-page hosting (PagerDuty hosted-status co-tenants)
+pagerduty.com
+
+# API documentation SaaS (custom.theneo.io packing)
+theneo.io
+
+# LMS / education platform tenants
+blackboard.com
+
+# CDN edge (customer.*cdn.ngenix.net)
+ngenix.net
+
+# Gov / campus email notification SaaS
+govdelivery.com
+
+# Email marketing / ESP client-tls packing
+adestra.com
+
+# Dental practice staging / temp site platform
+dentalqoretemp.com
+
+# Managed file transfer (Files.com family / sibling brand)
+exavault.com

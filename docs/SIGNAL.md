@@ -166,7 +166,7 @@ cargo run --release --example mine_glue -- \
   /tmp/ct-ma-eval.jsonl suppress.txt 40
 ```
 
-**Glue method:** rank brands on multi-keyword certs by distinct co-brand partners × log(events). Promote only **high-fan-out commodity platforms** after posterior evidence (not on first weird pair) — ESP/WAF/DAM/CRS/MFT/deals/CMS/HR/ITSM/vertical website/estimate SaaS — e.g. `files.com`, `stacksocial.com`, `dynamicweb-cms.com`, `hypeinnovation.com`, `dealer.com`, `demand-iq.com`. Leave corporate families and scarce B2B co-names alone. Do not hard-filter host labels. A′ lines stay unlabeled (family vs vendor is not decided at emit time).
+**Glue method:** rank brands on multi-keyword certs by distinct co-brand partners × log(events). Promote only **high-fan-out commodity platforms** after posterior evidence (not on first weird pair) — ESP/WAF/DAM/CRS/MFT/CDN/LMS/status-page/API-docs/deals/CMS/HR/ITSM/vertical website/estimate SaaS. Leave corporate families and scarce B2B co-names alone. Do not hard-filter host labels. A′ lines stay unlabeled (family vs vendor is not decided at emit time).
 **Read the `rank_signal` tiers carefully:** on a *cold* dump, Tier B looks huge because every host is “first seen.” Durable novelty (SQLite on brand-pairs and hosts) is what turns *pair* renewals quiet; tip CT still mints many unique hosts, so **human ops should start with novelty A′ only**.
 
 Avoid: volume-based brand suppress, `vpn`/`sso`/`merge` hard filters, fuzzy SLD matching.
@@ -318,11 +318,23 @@ Certificate Transparency is a public log of names orgs put on TLS certs. When tw
 | Human can skim A′ pairs | GO (with size cap) |
 | Labeled precision ≥70% on pairs | Pending human labels on sample |
 | Mega junk &lt;5% of emissions | **GO** after `NOVELTY_MAX_COALITION=5` (0%) |
-| ≥7 days warm novelty DB | Pending live deploy |
+| ≥7 days warm novelty DB | **GO** on live Oracle (~10d+) |
 | Known-ownership surprise filter | **Not built** — required for decision-grade framing |
 | Alert→public deal case studies | Pending |
 
 **Decision-grade minimum:** warm DB ≥7 days; labeled pair precision ≥~70%; overlay that suppresses already-known corporate families (OpenCorporates / subsidiary graph / hand list); a handful of timestamped alert→news case studies. Until the ownership filter exists, treat this as **CT scaffolding input** and a graph demo — not a finished early-warning product.
+
+### Validation checklist (before claiming M&A signal)
+
+Do **not** equate “~2k A′ lines” with commercial alpha. Multi-year full-CT backfill on Always Free is a **non-goal** (CT is multi-TB; no free bulk dump). Validate cheaply:
+
+1. **Stratified sample:** draw 50–100 A′ rows; tag each `family | platform | scarce_vendor | junk` (use [`audit_aprime`](../examples/audit_aprime.rs) if helpful).
+2. **Glue loop:** promote clear high-fan-out hubs into [`glue.txt`](../glue.txt) after review (`mine_glue`); accept early false A′ as cold-start debt.
+3. **Case studies:** for the best `family` tags, check ownership/news — did co-naming precede a known subsidiary link or announced deal, or only confirm known ownership?
+4. **Optional crt.sh spot-check:** for a *handful* of known historical deals, query whether multi-brand certs appeared before news — not a 752k-brand warehouse replay.
+5. **Keep the live archive** — that is the shoestring “backfill going forward”; off-box sealed gz when disk is tight ([`ARCHIVE.md`](ARCHIVE.md)).
+
+Only after (1)+(3) look promising should you invest in an ownership surprise filter or a separate vendor/platform product stream.
 
 ## Reproduce the eval dump
 

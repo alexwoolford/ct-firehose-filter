@@ -108,7 +108,7 @@ Goal: firehose → in-process A′ trickle to rotated `alerts.jsonl`, without fi
 3. **Filter logs:** `RUST_LOG=warn` in prod (reconnect / backpressure / failures). Progress counters are `info` (visible when `RUST_LOG=info`); on Oracle use **`curl http://127.0.0.1:9100/status`** (Compose publishes loopback only).
 4. **Rotate container logs.** Compose sets `json-file` `max-size: 10m` / `max-file: 3` on all services.
 5. **Novelty disk bounds:** A′-only skips `hosts` rows; chunk rotate + **20 GiB** total budget + gzip (`NOVELTY_ALERTS_*`).
-6. **Research archive:** default `ARCHIVE_DIR=/var/lib/ct-firehose-filter/archive` under novelty — rotate+gzip, **no** total prune; budget ~0.5–3 GB/day compressed; `/status` warns at `ARCHIVE_DISK_WARN_BYTES` (100 GiB). Disable with `ARCHIVE_DIR=off` only if you accept irreversible filters. See [`ARCHIVE.md`](ARCHIVE.md).
+6. **Research archive:** default `ARCHIVE_DIR=/var/lib/ct-firehose-filter/archive` under novelty — rotate+gzip, **no** total prune; budget ~0.5–3 GB/day compressed; `/status` warns at `ARCHIVE_DISK_WARN_BYTES` (100 GiB) which is **not** a 30 GiB Always Free root guard — also watch `df -h /` and off-box copy sealed `*.gz` (see [`ARCHIVE.md`](ARCHIVE.md)). Disable with `ARCHIVE_DIR=off` only if you accept irreversible filters.
 7. **systemd/journald:** configure `SystemMaxUse=` / rate limits if not using Docker.
 8. **Resources:** ~100 MiB RSS for a 752k watchlist HashSet (measured — [`SCALE.md`](SCALE.md)) + ~0.5–2 GB for CertStream; CPU follows CT rate;
    durable disk ≈ rotated logs + compact `novelty.db` + budget-capped alerts + **research archive** (+ tiny `ct_index.json`).
