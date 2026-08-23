@@ -1,8 +1,10 @@
 # Mega-apex / infra volume strip (this filter only).
 # High-volume CT infra apexes that may remain on domains.txt; exact eTLD+1 hits
-# are stripped before enqueue so the firehose stays needle-shaped.
-# Merged with glue.txt at load (same code path). Prefer glue.txt for multi-tenant
-# platforms that forge fake multi-brand coalitions — keep this file for infra volume.
+# are dropped at inspect (fully_suppressed) — they never enqueue or archive.
+# Inspect loads this file only. Novelty A′ ignore is suppress ∪ glue
+# (load_suppress_and_glue) — do not pass glue into DomainWatchlist::new_with_suppress.
+# Prefer glue.txt for multi-tenant platforms that forge fake multi-brand
+# coalitions — keep this file for infra volume.
 # Does not edit domains.txt / the shared watchlist.
 #
 # Blank lines and # comments are ignored. Missing SUPPRESS_FILE ⇒ no suppression.

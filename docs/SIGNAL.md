@@ -22,6 +22,8 @@ watchlist match (enqueue)
 
 “All A′ forever” is false for JSONL payloads: oldest `alerts.jsonl` chunks can be deleted at the 20 GiB budget while `novelty.db` coalition keys remain (so renewals stay quiet). Single-brand matches are **not** “cached B′”; with the archive on they land in `matches.jsonl`, which is still not a B′ feed.
 
+**Do not union A′ with the archive to “get all events.”** The archive is every **enqueued** match. A′ is a thinner derived view of that same stream (first-seen multi-brand after glue∪suppress ignore). Join A′ → archive on `event.fingerprint` for full `all_domains`. Mega-apex-only watchlist hits never enqueue — they are in neither file.
+
 ## Intent (mosaic tile)
 
 1. Watch hundreds of thousands of company domains on live CT (not toy keywords).
@@ -37,8 +39,8 @@ CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev resear
 | Thing | Where it lives | Distinguishable? |
 |---|---|---|
 | **A′ alerts** | `novelty.db` + `alerts.jsonl` | Untagged novel multi-brand coalitions after strip |
-| **Glue hubs** | Stripped before A′ via [`glue.txt`](../glue.txt) | Not an alert type — removes high-fan-out platforms from the diligence feed |
-| **Mega-apex suppress** | Same strip set via [`suppress.txt`](../suppress.txt) | Volume drop (near-zero-info infra) |
+| **Glue hubs** | A′ ignore via [`glue.txt`](../glue.txt) — **not** an inspect drop | Not an alert type — removes high-fan-out platforms from the diligence feed; hub-only leaves still archive |
+| **Mega-apex suppress** | Inspect **drop** when every implicated name is in [`suppress.txt`](../suppress.txt); those names are also in the A′ ignore set | Volume drop (near-zero-info infra). Mixed certs still enqueue; `all_domains` keeps the mega-apex SAN |
 | **Research archive** | `archive/matches.jsonl` | Post-**suppress** enqueue + `all_domains` (glue-only hubs included) ([`ARCHIVE.md`](ARCHIVE.md)) |
 
 Family-looking pairs (Optum×UHC) and scarce vendor-looking pairs (Gilead×Honeywell) **both land in the same `alerts.jsonl`** today. Glue hubs (dealer.com, files.com, Automattic, …) do **not** — they are stripped so A′ is not flooded with commodity SaaS co-tenants. That strip is for **diligence SNR**, not a claim that platform edges are worthless.
@@ -83,11 +85,27 @@ Numbers below are from the **raw 15m MatchEvent dump** before in-process novelty
 | Layer | Result | Intent met? |
 |---|---|---|
 | Firehose → watchlist match | Works at scale (~47k brands hit in 15m) | Yes |
-| Mega-apex suppress | Cut ~3.2M emits; remaining still ~1M/hr extrapolated | Partial |
+| Mega-apex suppress | See [live Oracle ratio](#live-oracle-funnel-inspect-drop-stays) — do **not** treat “~3.2M emits” as measured volume ([`SCALE.md`](SCALE.md) 3.2M is inspect/s at a 10k list) | Partial (still needed) |
 | Human-ready diligence trickle | Raw emit still too hot | No (solved later by A′) |
 | Early-warning / novelty store | **Now in-scope** via `EGRESS=novelty` → `novelty.db` + `alerts.jsonl` | Yes (product path) |
 
-**Volume (raw dump):** ~268k emits / 15m ≈ **1.07M/hr**. Top 20 brands ≈22% of events. Roughly half of events come from brands with ≥100 hits in the window (routine infra churn).
+**Volume (raw dump):** ~268k emits / 15m ≈ **1.07M/hr** *after* suppress already applied at capture. Top 20 brands ≈22% of events. Roughly half of events come from brands with ≥100 hits in the window (routine infra churn).
+
+### Live Oracle funnel (inspect-drop stays)
+
+Process-lifetime `/status` on the Always Free box (2026-08-23, **~37 min** uptime — ratio is this process only; `frames_per_sec` ≈ 2540 may include catch-up):
+
+| Counter | Value |
+|---|---|
+| `frames_seen` | 5,573,622 |
+| `matches_enqueued` (= `archive_events_written`) | 51,715 |
+| `matches_suppressed` (mega-apex-only, never archived) | 140,223 |
+| Watchlist hits that were fully suppressed | **73%** (140,223 / 191,938) |
+| `novelty_fully_ignored` (glue∪suppress after enqueue) | 1,145 |
+| `novelty_alerts_a` | 3 (~5/hr this slice) |
+| `archive_dir_bytes` | ~1.08 GiB (dir includes prior chunks; this process wrote ~26 MiB) |
+
+**Gate:** keep mega-apex **inspect-drop**. Three quarters of watchlist hits never enqueue; putting them in the 50 GiB rolling archive would mostly evict useful glue/customer rows. A′ would still ignore `suppress.txt` even if inspect-drop went away — otherwise `{amazonaws.com, acme.com}` would flood as two-brand coalitions. Revisit A′-only suppress only if this ratio collapses or you explicitly want Shopify-class hub-only rows in the archive.
 
 **Verdict on the filter:** engineering goal met (needle-shaped *relative to* CT). Raw emit alone is not human-ready; **warm A′** is the product trickle (~tens/hour).
 

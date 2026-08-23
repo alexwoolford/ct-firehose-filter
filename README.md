@@ -35,6 +35,8 @@ watchlist match (enqueue)
 | **A′** | First-seen multi-brand coalition (high-SNR diligence) | `alerts.jsonl` (20 GiB prune) + coalition keys in `novelty.db` (kept) |
 | **B′** | First-seen host under a brand (noisy tip churn) | **Not written** unless you opt in `NOVELTY_TIERS=A,B` |
 
+**A′ is a subset of the archive, not a second event log to union.** Every A′ line came from an enqueue that also archived; glue-only and single-brand matches archive without alerting. Mega-apex-only watchlist hits (`fully_suppressed`) never enqueue — they are in neither file. Join A′ → archive on `event.fingerprint` for full SANs.
+
 Details: [`docs/SIGNAL.md`](docs/SIGNAL.md) (A′/B′), [`docs/ARCHIVE.md`](docs/ARCHIVE.md) (research archive).
 
 This repo is **not** a full entity-resolution product (no SEC CIK/LEI mapping, no pDNS wildcard piercing, no FIX / warehouse feeds). Off-box streaming of alerts is **out of scope for now**.

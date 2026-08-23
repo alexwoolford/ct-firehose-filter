@@ -1,6 +1,6 @@
 # Tiny local demo watchlist (eTLD+1s), not a production domains.txt.
 # Point WATCHLIST_FILE / WATCHLIST_HOST_PATH at your full registered-domain list for real runs.
-# High-volume CT apexes are stripped at egress via SUPPRESS_FILE (suppress.txt), not here.
+# High-volume CT apexes are dropped at inspect via SUPPRESS_FILE (suppress.txt), not here.
 acquirer.com
 target.com
 fitbit.com
