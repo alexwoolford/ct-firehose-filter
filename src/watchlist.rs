@@ -289,8 +289,17 @@ fn host_suffixes(host: &str) -> impl Iterator<Item = &str> {
 
 fn etld1(host: &str) -> Option<String> {
     let host = normalize_host(host)?;
-    addr::parse_domain_name(&host)
-        .ok()?
-        .root()
-        .map(str::to_ascii_lowercase)
+    let parsed = addr::parse_domain_name(&host).ok()?;
+    let suffix = parsed.suffix();
+    // The name is itself a public suffix. Inserting `com` / `github.io` would
+    // make suffix-walk match every child. Deeper private suffixes such as
+    // `s3.amazonaws.com` stay as keys so a more specific watchlist still works.
+    if parsed.has_known_suffix() && suffix.eq_ignore_ascii_case(&host) {
+        let labels = host.split('.').filter(|l| !l.is_empty()).count();
+        if parsed.is_icann() || labels <= 2 {
+            return None;
+        }
+        return Some(host);
+    }
+    parsed.root().map(str::to_ascii_lowercase)
 }

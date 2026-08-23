@@ -2,34 +2,34 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 
-use ct_firehose_filter::{HotAutomaton, KeywordAutomaton};
+use ct_firehose_filter::{DomainWatchlist, HotWatchlist};
 
 #[test]
-fn swap_installs_new_keywords_and_drops_removed_ones() {
-    let hot = HotAutomaton::new(KeywordAutomaton::new(["alpha"]));
-    assert!(hot.inspect(&["alpha.com"]).is_some());
-    assert!(hot.inspect(&["beta.com"]).is_none());
+fn swap_installs_new_names_and_drops_removed_ones() {
+    let hot = HotWatchlist::new(DomainWatchlist::new(["old.com"]));
+    assert!(hot.inspect(&["www.old.com"]).is_some());
+    assert!(hot.inspect(&["www.new.com"]).is_none());
 
-    hot.swap(KeywordAutomaton::new(["beta"]));
+    hot.swap(DomainWatchlist::new(["new.com"]));
 
     assert!(
-        hot.inspect(&["alpha.com"]).is_none(),
-        "removed keyword must stop matching after swap"
+        hot.inspect(&["www.old.com"]).is_none(),
+        "removed name must stop matching after swap"
     );
-    assert!(hot.inspect(&["beta.com"]).is_some());
+    assert!(hot.inspect(&["www.new.com"]).is_some());
 }
 
 #[test]
-fn swap_to_empty_automaton_drops_everything() {
-    let hot = HotAutomaton::new(KeywordAutomaton::new(["alpha", "beta"]));
-    hot.swap(KeywordAutomaton::new(Vec::<String>::new()));
-    assert!(hot.inspect(&["alpha.com"]).is_none());
-    assert!(hot.inspect(&["beta.com"]).is_none());
+fn swap_to_empty_watchlist_drops_everything() {
+    let hot = HotWatchlist::new(DomainWatchlist::new(["old.com", "new.com"]));
+    hot.swap(DomainWatchlist::new(Vec::<String>::new()));
+    assert!(hot.inspect(&["www.old.com"]).is_none());
+    assert!(hot.inspect(&["www.new.com"]).is_none());
 }
 
 #[test]
 fn concurrent_inspect_during_swap_does_not_panic_or_tear() {
-    let hot = Arc::new(HotAutomaton::new(KeywordAutomaton::new(["oldkw"])));
+    let hot = Arc::new(HotWatchlist::new(DomainWatchlist::new(["old.com"])));
     let panics = Arc::new(AtomicUsize::new(0));
     let mut handles = Vec::new();
 
@@ -39,9 +39,9 @@ fn concurrent_inspect_during_swap_does_not_panic_or_tear() {
         handles.push(thread::spawn(move || {
             for i in 0..5_000 {
                 let domain = if i % 2 == 0 {
-                    "oldkw.example.com"
+                    "www.old.com"
                 } else {
-                    "newkw.example.com"
+                    "www.new.com"
                 };
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     hot.inspect(&[domain])
@@ -49,11 +49,10 @@ fn concurrent_inspect_during_swap_does_not_panic_or_tear() {
                 match result {
                     Ok(ev) => {
                         if let Some(ev) = ev {
-                            // Must be a coherent automaton: never mix old+new keywords.
                             let ks = &ev.matched_keywords;
-                            let only_old = ks == &["oldkw".to_string()];
-                            let only_new = ks == &["newkw".to_string()];
-                            assert!(only_old || only_new, "torn keyword mix: {ks:?}");
+                            let only_old = ks == &["old.com".to_string()];
+                            let only_new = ks == &["new.com".to_string()];
+                            assert!(only_old || only_new, "torn watchlist mix: {ks:?}");
                         }
                     }
                     Err(_) => {
@@ -66,9 +65,9 @@ fn concurrent_inspect_during_swap_does_not_panic_or_tear() {
 
     for i in 0..200 {
         if i % 2 == 0 {
-            hot.swap(KeywordAutomaton::new(["newkw"]));
+            hot.swap(DomainWatchlist::new(["new.com"]));
         } else {
-            hot.swap(KeywordAutomaton::new(["oldkw"]));
+            hot.swap(DomainWatchlist::new(["old.com"]));
         }
     }
 
@@ -81,7 +80,7 @@ fn concurrent_inspect_during_swap_does_not_panic_or_tear() {
         "inspect panicked during swap"
     );
 
-    hot.swap(KeywordAutomaton::new(["newkw"]));
-    assert!(hot.inspect(&["newkw.example.com"]).is_some());
-    assert!(hot.inspect(&["oldkw.example.com"]).is_none());
+    hot.swap(DomainWatchlist::new(["new.com"]));
+    assert!(hot.inspect(&["www.new.com"]).is_some());
+    assert!(hot.inspect(&["www.old.com"]).is_none());
 }

@@ -64,8 +64,6 @@ Watchlist file entries are normalized with the Public Suffix List when loaded (s
 | `*.eu-central-1.amazonaws.com` | amazonaws.com | (stripped) | drop |
 | `google.com.evil.example` | — | — | no hit |
 
-The older Aho-Corasick keyword automaton remains in `src/filter.rs` for unit tests; the live pipeline uses `DomainWatchlist`.
-
 ## Delivery semantics
 
 CertStream has **no durable cursor** (unlike crt.sh `ct_monitor`'s `entry_id`). With `EGRESS=novelty`, matches are processed in-process into SQLite + alerts; reconnects may skip or replay frames. Prefer durable `novelty.db` so renewals stay quiet after restart.
@@ -178,7 +176,6 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `src/config.rs` | typed env config + fail-fast `validate()` |
 | `src/parse.rs` | partial deserialize of `data.leaf_cert.all_domains` |
 | `src/watchlist.rs` | PSL eTLD+1 HashSet + host-suffix match + suppress strip |
-| `src/filter.rs` | legacy Aho-Corasick keyword matcher (tests) |
 | `src/pipeline.rs` | bounded MPSC backpressure + metrics wiring |
 | `src/metrics.rs` | atomic counters + periodic progress logs |
 | `src/batch.rs` | flush at 10 messages, 256 KiB, or timer |

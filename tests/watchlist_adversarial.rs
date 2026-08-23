@@ -336,3 +336,52 @@ fn glue_only_leaf_is_not_fully_suppressed_at_inspect() {
     assert!(mega.fully_suppressed);
     assert!(mega.event.is_none());
 }
+
+#[test]
+fn amazonaws_private_suffix_watchlist_and_narrower_s3_name() {
+    let all = wl(&["amazonaws.com"]);
+    assert!(all.inspect(&["s3.amazonaws.com"]).is_some());
+    assert!(all.inspect(&["*.eu-central-1.amazonaws.com"]).is_some());
+
+    let s3_only = wl(&["s3.amazonaws.com"]);
+    assert!(
+        s3_only.inspect(&["foo.s3.amazonaws.com"]).is_some(),
+        "s3.amazonaws.com as a watchlist name is the PSL eTLD+1"
+    );
+    assert!(
+        s3_only.inspect(&["ec2.amazonaws.com"]).is_none(),
+        "ec2.amazonaws.com must not hit a s3.amazonaws.com-only watchlist"
+    );
+}
+
+#[test]
+fn github_io_public_suffix_is_not_a_watchlist_key() {
+    let bare = wl(&["github.io"]);
+    assert_eq!(
+        bare.len(),
+        0,
+        "bare github.io is an ICANN public suffix and must not be inserted"
+    );
+    assert!(
+        bare.inspect(&["random.github.io"]).is_none(),
+        "github.io must not match every GitHub Pages host"
+    );
+
+    let tenant = wl(&["acme.github.io"]);
+    assert!(tenant.inspect(&["www.acme.github.io"]).is_some());
+    assert!(
+        tenant.inspect(&["other.github.io"]).is_none(),
+        "acme.github.io must not implicate other.github.io"
+    );
+}
+
+#[test]
+fn bare_icann_public_suffix_does_not_match_the_internet() {
+    let com = wl(&["com"]);
+    assert_eq!(com.len(), 0);
+    assert!(com.inspect(&["www.google.com"]).is_none());
+
+    let couk = wl(&["co.uk"]);
+    assert_eq!(couk.len(), 0);
+    assert!(couk.inspect(&["www.example.co.uk"]).is_none());
+}

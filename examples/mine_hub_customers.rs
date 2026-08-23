@@ -50,14 +50,13 @@ fn archive_files(root: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>
     for ent in fs::read_dir(root)? {
         let path = ent?.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        if name == "matches.jsonl"
+        if (name == "matches.jsonl"
             || name.starts_with("matches.jsonl.")
             || name.ends_with(".jsonl")
-            || name.ends_with(".jsonl.gz")
+            || name.ends_with(".jsonl.gz"))
+            && path.is_file()
         {
-            if path.is_file() {
-                out.push(path);
-            }
+            out.push(path);
         }
     }
     out.sort();

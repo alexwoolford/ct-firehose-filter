@@ -1,7 +1,7 @@
 //! Corporate Strategic Intent Filter — CT firehose edge filter.
 //!
-//! Library surface is designed for adversarial tests: parse, label-aware
-//! Aho-Corasick matching, hot-reload, bounded MPSC backpressure, and batched egress.
+//! Library surface is designed for adversarial tests: parse, eTLD+1 watchlist
+//! matching, hot-reload, bounded MPSC backpressure, and batched egress.
 
 pub mod alerts_file;
 pub mod archive;
@@ -10,9 +10,7 @@ pub mod config;
 pub mod egress;
 pub mod error;
 pub mod event;
-pub mod filter;
 pub mod ingress;
-pub mod keywords;
 pub mod metrics;
 pub mod novelty;
 pub mod novelty_alert;
@@ -44,12 +42,10 @@ pub use error::{
     PipelineError, StartupError,
 };
 pub use event::{FrameMeta, MatchEvent};
-pub use filter::{HotAutomaton, KeywordAutomaton};
 pub use ingress::{
     next_backoff, run_ingress, run_ingress_with_metrics, with_jitter, ReconnectPolicy,
     CLIENT_PING_INTERVAL,
 };
-pub use keywords::{FileKeywordSource, KeywordSource, MemoryKeywordSource};
 pub use metrics::{MetricsSnapshot, PipelineMetrics};
 pub use novelty::NoveltyStore;
 pub use novelty_alert::{

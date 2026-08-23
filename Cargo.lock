@@ -183,7 +183,6 @@ name = "ct-firehose-filter"
 version = "0.1.0"
 dependencies = [
  "addr",
- "aho-corasick",
  "arc-swap",
  "async-trait",
  "axum",

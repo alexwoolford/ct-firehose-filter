@@ -62,6 +62,4 @@ pub enum PipelineError {
     Ingress(#[from] IngressError),
     #[error(transparent)]
     Batch(#[from] BatchError),
-    #[error(transparent)]
-    Keywords(#[from] KeywordSourceError),
 }
