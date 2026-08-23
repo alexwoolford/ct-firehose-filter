@@ -496,4 +496,33 @@ mod tests {
             "A′ must not emit null B′ placeholders: {json}"
         );
     }
+
+    #[test]
+    fn glue_in_ignore_strips_a_prime_but_filter_keeps_other_brands() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore: HashSet<String> = ["pagerduty.com".into()].into_iter().collect();
+        let policy = NoveltyPolicy::default();
+        let hub_only = MatchEvent::new(
+            vec!["acme.hosted-status.pagerduty.com".into()],
+            vec!["pagerduty.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-glue".into()),
+        );
+        let (alerts, s) = process_match(&store, &ignore, &policy, &hub_only).unwrap();
+        assert!(alerts.is_empty());
+        assert_eq!(s.fully_ignored, 1);
+
+        let mixed = MatchEvent::new(
+            vec![
+                "acme.hosted-status.pagerduty.com".into(),
+                "sso.acme.com".into(),
+            ],
+            vec!["pagerduty.com".into(), "acme.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-mixed".into()),
+        );
+        assert_eq!(filter_brands(&mixed, &ignore), vec!["acme.com".to_string()]);
+    }
 }

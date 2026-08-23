@@ -101,6 +101,7 @@ pub struct StatusResponse {
     pub archive_bytes_written: u64,
     pub archive_dir: Option<String>,
     pub archive_dir_bytes: Option<u64>,
+    pub archive_max_total_bytes: Option<u64>,
     pub archive_disk_warn: bool,
     pub config_hash: Option<String>,
     pub snapshot_id: Option<String>,
@@ -205,22 +206,30 @@ fn build_status(state: &StatusState) -> StatusResponse {
         .map(|p| alerts_file_stats(p))
         .unwrap_or((None, None));
 
-    let (archive_dir, archive_dir_bytes, archive_disk_warn, config_hash, snapshot_id) =
-        match &state.archive {
-            Some(arch) => {
-                let bytes = arch.total_bytes_on_disk();
-                let warn = bytes >= arch.disk_warn_bytes();
-                let prov = arch.provenance().load();
-                (
-                    Some(arch.dir().display().to_string()),
-                    Some(bytes),
-                    warn,
-                    Some(prov.config_hash.clone()),
-                    Some(prov.snapshot_id.clone()),
-                )
-            }
-            None => (None, None, false, None, None),
-        };
+    let (
+        archive_dir,
+        archive_dir_bytes,
+        archive_max_total_bytes,
+        archive_disk_warn,
+        config_hash,
+        snapshot_id,
+    ) = match &state.archive {
+        Some(arch) => {
+            let bytes = arch.total_bytes_on_disk();
+            let max_total = arch.max_total_bytes();
+            let warn = crate::archive::archive_disk_warn(bytes, arch.disk_warn_bytes(), max_total);
+            let prov = arch.provenance().load();
+            (
+                Some(arch.dir().display().to_string()),
+                Some(bytes),
+                Some(max_total),
+                warn,
+                Some(prov.config_hash.clone()),
+                Some(prov.snapshot_id.clone()),
+            )
+        }
+        None => (None, None, None, false, None, None),
+    };
 
     StatusResponse {
         ok: true,
@@ -255,6 +264,7 @@ fn build_status(state: &StatusState) -> StatusResponse {
         archive_bytes_written: snap.archive_bytes_written,
         archive_dir,
         archive_dir_bytes,
+        archive_max_total_bytes,
         archive_disk_warn,
         config_hash,
         snapshot_id,

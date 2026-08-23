@@ -6,6 +6,7 @@
 //!
 //! See [`docs/ARCHIVE.md`](../../docs/ARCHIVE.md).
 
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -33,6 +34,26 @@ pub const DEFAULT_ARCHIVE_MAX_BYTES: u64 = 256 * 1024 * 1024;
 /// Default warn threshold for total archive dir bytes (100 GiB).
 pub const DEFAULT_ARCHIVE_DISK_WARN_BYTES: u64 = 100 * 1024 * 1024 * 1024;
 
+/// Default total archive-dir budget (50 GiB). Oldest sealed chunks are deleted
+/// until the dir fits. `ARCHIVE_MAX_TOTAL_BYTES=0` disables prune.
+pub const DEFAULT_ARCHIVE_MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024 * 1024;
+
+/// Default cap on archived `all_domains` (name-agnostic megapack compact).
+/// `ARCHIVE_MAX_ALL_DOMAINS=0` disables compacting.
+pub const DEFAULT_ARCHIVE_MAX_ALL_DOMAINS: usize = 32;
+
+/// True when dir size hits the absolute warn threshold or 80% of the prune cap.
+pub fn archive_disk_warn(bytes: u64, disk_warn_bytes: u64, max_total_bytes: u64) -> bool {
+    if bytes >= disk_warn_bytes {
+        return true;
+    }
+    if max_total_bytes > 0 {
+        let eighty = max_total_bytes.saturating_mul(8) / 10;
+        return bytes >= eighty;
+    }
+    false
+}
+
 /// Default archive root when `EGRESS=novelty` and `ARCHIVE_DIR` unset.
 pub fn default_archive_dir() -> PathBuf {
     PathBuf::from("/var/lib/ct-firehose-filter/archive")
@@ -46,8 +67,11 @@ pub struct MatchArchiveEvent {
     pub ingest_ts_unix: i64,
     pub config_hash: String,
     pub snapshot_id: String,
-    /// Full leaf `all_domains` at inspect time (not just watchlist hits).
+    /// Leaf `all_domains` at inspect time (may be a bounded sample; see `all_domains_truncated`).
     pub all_domains: Vec<String>,
+    /// True when `all_domains` was compacted; `san_count` is still the raw leaf size.
+    #[serde(default)]
+    pub all_domains_truncated: bool,
     pub matched_domains: Vec<String>,
     pub matched_keywords: Vec<String>,
     pub seen: Option<f64>,
@@ -62,6 +86,7 @@ impl MatchArchiveEvent {
     pub fn from_match(
         ev: &MatchEvent,
         all_domains: Vec<String>,
+        all_domains_truncated: bool,
         config_hash: impl Into<String>,
         snapshot_id: impl Into<String>,
     ) -> Self {
@@ -75,6 +100,7 @@ impl MatchArchiveEvent {
             config_hash: config_hash.into(),
             snapshot_id: snapshot_id.into(),
             all_domains,
+            all_domains_truncated,
             matched_domains: ev.matched_domains.clone(),
             matched_keywords: ev.matched_keywords.clone(),
             seen: ev.seen,
@@ -86,6 +112,39 @@ impl MatchArchiveEvent {
     }
 }
 
+/// Keep matched watchlist hosts first, then fill from `all_domains` until `cap`.
+/// `cap == 0` means unlimited (no compact).
+pub fn compact_all_domains(
+    all_domains: &[impl AsRef<str>],
+    matched_domains: &[String],
+    cap: usize,
+) -> (Vec<String>, bool) {
+    if cap == 0 || all_domains.len() <= cap {
+        let v: Vec<String> = all_domains.iter().map(|d| d.as_ref().to_string()).collect();
+        return (v, false);
+    }
+    let mut out = Vec::with_capacity(cap);
+    let mut seen: HashSet<String> = HashSet::new();
+    for d in matched_domains {
+        if out.len() >= cap {
+            break;
+        }
+        if seen.insert(d.clone()) {
+            out.push(d.clone());
+        }
+    }
+    for d in all_domains {
+        if out.len() >= cap {
+            break;
+        }
+        let s = d.as_ref();
+        if seen.insert(s.to_string()) {
+            out.push(s.to_string());
+        }
+    }
+    (out, true)
+}
+
 /// Live config identity written into every archive line.
 #[derive(Debug, Clone)]
 pub struct ConfigProvenance {
@@ -93,12 +152,17 @@ pub struct ConfigProvenance {
     pub snapshot_id: String,
 }
 
-/// Writer settings (no total-byte prune — multi-year retention).
+/// Writer settings. Sealed `matches.jsonl.*` / `.gz` chunks are pruned to
+/// `max_total_bytes`. The live file and `config_snapshots/` are never deleted.
 #[derive(Debug, Clone)]
 pub struct ArchiveConfig {
     pub dir: PathBuf,
     pub max_bytes: u64,
     pub disk_warn_bytes: u64,
+    /// Total archive-dir budget. `0` disables prune (unlimited).
+    pub max_total_bytes: u64,
+    /// Max `all_domains` strings stored per row (`0` = unlimited).
+    pub max_all_domains: usize,
 }
 
 impl ArchiveConfig {
@@ -132,10 +196,20 @@ impl ArchiveConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(DEFAULT_ARCHIVE_DISK_WARN_BYTES);
+        let max_total_bytes = std::env::var("ARCHIVE_MAX_TOTAL_BYTES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_ARCHIVE_MAX_TOTAL_BYTES);
+        let max_all_domains = std::env::var("ARCHIVE_MAX_ALL_DOMAINS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(DEFAULT_ARCHIVE_MAX_ALL_DOMAINS);
         Some(Self {
             dir,
             max_bytes,
             disk_warn_bytes,
+            max_total_bytes,
+            max_all_domains,
         })
     }
 }
@@ -163,6 +237,13 @@ impl MatchArchive {
             .create(true)
             .append(true)
             .open(&live_path)?;
+        if let Err(err) = prune_sealed_to_budget(&cfg, &live_path) {
+            tracing::warn!(
+                error = %err,
+                dir = %cfg.dir.display(),
+                "archive prune on open failed"
+            );
+        }
         Ok(Arc::new(Self {
             cfg,
             live_path,
@@ -189,17 +270,24 @@ impl MatchArchive {
         self.cfg.disk_warn_bytes
     }
 
-    /// Append one enqueued match with full leaf SAN list.
+    pub fn max_total_bytes(&self) -> u64 {
+        self.cfg.max_total_bytes
+    }
+
+    /// Append one enqueued match. Oversized SAN lists are compacted (see
+    /// [`compact_all_domains`]); `san_count` stays the raw leaf size.
     pub fn record_enqueued<D: AsRef<str>>(
         &self,
         ev: &MatchEvent,
         all_domains: &[D],
     ) -> std::io::Result<()> {
         let prov = self.provenance.load();
-        let domains: Vec<String> = all_domains.iter().map(|d| d.as_ref().to_string()).collect();
+        let (domains, truncated) =
+            compact_all_domains(all_domains, &ev.matched_domains, self.cfg.max_all_domains);
         let rec = MatchArchiveEvent::from_match(
             ev,
             domains,
+            truncated,
             prov.config_hash.as_str(),
             prov.snapshot_id.as_str(),
         );
@@ -294,6 +382,13 @@ fn rotate_live_if_needed(
             "failed to gzip rotated match archive; keeping uncompressed"
         );
     }
+    if let Err(err) = prune_sealed_to_budget(cfg, live_path) {
+        tracing::warn!(
+            error = %err,
+            dir = %cfg.dir.display(),
+            "archive prune after rotate failed"
+        );
+    }
     let fresh = OpenOptions::new()
         .create(true)
         .append(true)
@@ -301,8 +396,82 @@ fn rotate_live_if_needed(
     *writer = BufWriter::new(fresh);
     tracing::info!(
         path = %live_path.display(),
-        "rotated match research archive (no prune — multi-year retention)"
+        "rotated match research archive"
     );
+    Ok(())
+}
+
+fn is_sealed_archive_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(DEFAULT_ARCHIVE_LIVE_NAME) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix('.') else {
+        return false;
+    };
+    let stem = rest.strip_suffix(".gz").unwrap_or(rest);
+    !stem.is_empty() && stem.chars().all(|c| c.is_ascii_digit())
+}
+
+fn sealed_sort_key(path: &Path) -> u128 {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let after_dot = name.rsplit_once('.').map(|(_, r)| r).unwrap_or("");
+    let stem = if after_dot == "gz" {
+        name.trim_end_matches(".gz")
+            .rsplit_once('.')
+            .map(|(_, r)| r)
+            .unwrap_or("")
+    } else {
+        after_dot
+    };
+    stem.parse().unwrap_or(0)
+}
+
+fn list_sealed(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut siblings: Vec<PathBuf> = fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(is_sealed_archive_name)
+        })
+        .collect();
+    siblings.sort_by_key(|p| sealed_sort_key(p));
+    Ok(siblings)
+}
+
+/// Delete oldest sealed `matches.jsonl.*` / `.gz` until the dir fits `max_total_bytes`.
+/// Never deletes the live file or `config_snapshots/`. `max_total_bytes == 0` is a no-op.
+pub fn prune_sealed_to_budget(cfg: &ArchiveConfig, live_path: &Path) -> std::io::Result<()> {
+    if cfg.max_total_bytes == 0 {
+        return Ok(());
+    }
+    let mut siblings = list_sealed(&cfg.dir)?;
+    loop {
+        let total = dir_byte_total(&cfg.dir);
+        if total <= cfg.max_total_bytes || siblings.is_empty() {
+            break;
+        }
+        let old = siblings.remove(0);
+        if old == live_path {
+            continue;
+        }
+        match fs::remove_file(&old) {
+            Ok(()) => tracing::info!(
+                path = %old.display(),
+                "pruned oldest sealed match archive to fit ARCHIVE_MAX_TOTAL_BYTES"
+            ),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    path = %old.display(),
+                    "failed to prune sealed match archive"
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -499,6 +668,8 @@ mod tests {
                 dir: dir.clone(),
                 max_bytes: 1_048_576,
                 disk_warn_bytes: u64::MAX,
+                max_total_bytes: 0,
+                max_all_domains: 0,
             },
             swap,
             None,
@@ -523,5 +694,138 @@ mod tests {
         assert!(body.contains("\"drop_stage\":\"enqueued\""));
         assert!(body.contains("config_hash"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn compact_all_domains_keeps_matched_then_samples() {
+        let all: Vec<String> = (0..40).map(|i| format!("h{i}.example")).collect();
+        let matched = vec!["h0.example".into(), "h39.example".into()];
+        let (sample, truncated) = compact_all_domains(&all, &matched, 8);
+        assert!(truncated);
+        assert_eq!(sample.len(), 8);
+        assert_eq!(sample[0], "h0.example");
+        assert_eq!(sample[1], "h39.example");
+        assert!(sample.contains(&"h1.example".into()));
+    }
+
+    #[test]
+    fn archive_truncates_oversized_san_lists() {
+        let dir = std::env::temp_dir().join(format!(
+            "ct-archive-cap-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let wl = dir.join("wl.txt");
+        let sup = dir.join("sup.txt");
+        let glue = dir.join("glue.txt");
+        fs::write(&wl, "acme.com\n").unwrap();
+        fs::write(&sup, "").unwrap();
+        fs::write(&glue, "").unwrap();
+
+        let prov = write_config_snapshot(&dir, &wl, &sup, &glue).unwrap();
+        let swap = Arc::new(ArcSwap::from_pointee(prov));
+        let arch = MatchArchive::open(
+            ArchiveConfig {
+                dir: dir.clone(),
+                max_bytes: 1_048_576,
+                disk_warn_bytes: u64::MAX,
+                max_total_bytes: 0,
+                max_all_domains: 4,
+            },
+            swap,
+            None,
+        )
+        .unwrap();
+
+        let all: Vec<String> = (0..20).map(|i| format!("h{i}.acme.com")).collect();
+        let ev = MatchEvent::new(
+            vec!["h0.acme.com".into()],
+            vec!["acme.com".into()],
+            Some(1.0),
+            Some("test".into()),
+            Some("fp".into()),
+        )
+        .with_san_count(20);
+        arch.record_enqueued(&ev, &all).unwrap();
+        arch.flush().unwrap();
+
+        let body = fs::read_to_string(dir.join(DEFAULT_ARCHIVE_LIVE_NAME)).unwrap();
+        let rec: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
+        assert_eq!(rec["all_domains"].as_array().unwrap().len(), 4);
+        assert_eq!(rec["all_domains_truncated"], true);
+        assert_eq!(rec["san_count"], 20);
+        assert_eq!(rec["all_domains"][0], "h0.acme.com");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_deletes_oldest_sealed_keeps_live() {
+        let dir = std::env::temp_dir().join(format!(
+            "ct-archive-prune-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let live = dir.join(DEFAULT_ARCHIVE_LIVE_NAME);
+        fs::write(&live, vec![b'L'; 100]).unwrap();
+        let old = dir.join(format!("{}.100", DEFAULT_ARCHIVE_LIVE_NAME));
+        let mid = dir.join(format!("{}.200", DEFAULT_ARCHIVE_LIVE_NAME));
+        let newest = dir.join(format!("{}.300.gz", DEFAULT_ARCHIVE_LIVE_NAME));
+        fs::write(&old, vec![b'A'; 1000]).unwrap();
+        fs::write(&mid, vec![b'B'; 1000]).unwrap();
+        fs::write(&newest, vec![b'C'; 1000]).unwrap();
+        let cfg = ArchiveConfig {
+            dir: dir.clone(),
+            max_bytes: 1_048_576,
+            disk_warn_bytes: u64::MAX,
+            max_total_bytes: 1_500,
+            max_all_domains: 0,
+        };
+        prune_sealed_to_budget(&cfg, &live).unwrap();
+        assert!(live.exists());
+        assert_eq!(fs::read(&live).unwrap(), vec![b'L'; 100]);
+        assert!(!old.exists());
+        assert!(!mid.exists());
+        assert!(newest.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_disabled_when_max_total_is_zero() {
+        let dir = std::env::temp_dir().join(format!(
+            "ct-archive-noprune-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let live = dir.join(DEFAULT_ARCHIVE_LIVE_NAME);
+        fs::write(&live, b"live\n").unwrap();
+        let sealed = dir.join(format!("{}.1.gz", DEFAULT_ARCHIVE_LIVE_NAME));
+        fs::write(&sealed, vec![b'Z'; 10_000]).unwrap();
+        let cfg = ArchiveConfig {
+            dir: dir.clone(),
+            max_bytes: 1_048_576,
+            disk_warn_bytes: u64::MAX,
+            max_total_bytes: 0,
+            max_all_domains: 0,
+        };
+        prune_sealed_to_budget(&cfg, &live).unwrap();
+        assert!(sealed.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn archive_disk_warn_trips_at_eighty_percent_of_cap() {
+        assert!(!archive_disk_warn(799, u64::MAX, 1_000));
+        assert!(archive_disk_warn(800, u64::MAX, 1_000));
+        assert!(archive_disk_warn(50, 50, 0));
+        assert!(!archive_disk_warn(49, 50, 0));
     }
 }

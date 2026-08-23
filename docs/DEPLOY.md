@@ -68,7 +68,7 @@ Target: **Always Free Ampere** in **`us-phoenix-1`** (Phoenix).
 |---|---|---|
 | Shape | **VM.Standard.A1.Flex**, **2 OCPU / 12 GB** | Post–Aug 2026 Always Free Ampere cap. Do **not** add a second A1 VM. |
 | Image | **Oracle Linux 9** | CertStream image is `linux/arm64`; filter builds on Ampere. |
-| Boot volume | Largest Always Free-eligible size (~200 GB if available) | Headroom for Docker layers; novelty DB stays small. |
+| Boot volume | Largest Always Free-eligible size (~200 GB if available) | **Gotcha:** OL images often LVM only ~45 GB of that disk (`/` ~30 GB + `/var/oled` ~15 GB). Grow LVM into free space before the archive fills `/` — see [`ARCHIVE.md`](ARCHIVE.md#enable--path). `/var/oled` is **not** for app data. |
 | IMDSv2 “Require authorization header” | **ON** | Leave on. |
 | Confidential computing | Off | Not needed. |
 | Public IP | Yes | SSH + outbound CT. |
@@ -149,7 +149,7 @@ deploy/scripts/preflight-soak.sh --compressed
 deploy/scripts/preflight-failure-drill.sh
 ```
 
-**Disk bounds baked in:** `EGRESS=novelty` + Docker log `10m`×3; A′-only skips `hosts` table growth; `NOVELTY_ALERTS_MAX_BYTES` (256 MiB chunks) + `NOVELTY_ALERTS_MAX_TOTAL_BYTES` (20 GiB) prune oldest; gzip sealed chunks by default.
+**Disk bounds baked in:** `EGRESS=novelty` + Docker log `10m`×3; A′-only skips `hosts` table growth; `NOVELTY_ALERTS_MAX_BYTES` (256 MiB chunks) + `NOVELTY_ALERTS_MAX_TOTAL_BYTES` (20 GiB) prune oldest; gzip sealed chunks by default; research archive rotate+gzip + `ARCHIVE_MAX_TOTAL_BYTES` (50 GiB) prune of oldest sealed `matches.jsonl.*`.
 
 **Measured (compressed soak on a 15m tip dump):** cold `novelty.db` ≈ **216 KiB** (1,117 coalitions, **0 hosts**); cold `alerts.jsonl` ≈ **548 KiB** (887 A′); warm re-pass **0** new alerts / flat DB. Full multi-hour live sampler: `preflight-soak.sh --live --hours 4`.
 

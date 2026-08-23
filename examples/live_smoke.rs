@@ -9,7 +9,8 @@
 //! ```
 //!
 //! Args: `<watchlist> [secs] [suppress_file] [dump_jsonl_path]`
-//! Env: `SUPPRESS_FILE`, `GLUE_FILE` (default `glue.txt`), `DUMP_JSONL` (overrides 4th arg).
+//! Env: `SUPPRESS_FILE`, `DUMP_JSONL` (overrides 4th arg).
+//! Inspect uses suppress.txt only (glue is A′ strip, not an ingest drop).
 
 use std::env;
 use std::fs::File;
@@ -19,8 +20,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use ct_firehose_filter::{
-    load_domain_file, load_suppress_and_glue, run_pipeline_with_metrics, DomainWatchlist,
-    HotWatchlist, PipelineConfig, PipelineMetrics, RecordingSink,
+    load_domain_file, load_suppress_file, run_pipeline_with_metrics, DomainWatchlist, HotWatchlist,
+    PipelineConfig, PipelineMetrics, RecordingSink,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -44,7 +45,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(3)
         .or_else(|| env::var("SUPPRESS_FILE").ok())
         .unwrap_or_else(|| "suppress.txt".to_string());
-    let glue_path = env::var("GLUE_FILE").unwrap_or_else(|_| "glue.txt".to_string());
     let dump_path: Option<PathBuf> = env::var("DUMP_JSONL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let started = Instant::now();
     let names = load_domain_file(&watchlist_path)?;
-    let suppress = load_suppress_and_glue(&suppress_path, &glue_path)?;
+    let suppress = load_suppress_file(&suppress_path)?;
     let watchlist = DomainWatchlist::new_with_suppress(&names, &suppress);
     tracing::info!(
         watchlist = watchlist.len(),
@@ -63,7 +63,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         path = %watchlist_path,
         suppress_path = %suppress_path,
-        glue_path = %glue_path,
         dump_jsonl = ?dump_path,
         "loaded watchlist"
     );

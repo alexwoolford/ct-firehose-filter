@@ -16,7 +16,7 @@ watchlist match (enqueue)
 
 | Stream | Meaning | Prod disk |
 |---|---|---|
-| **Research archive** | Every enqueued match (before novelty gates) | `archive/matches.jsonl` — rotate+gzip, no total prune ([`ARCHIVE.md`](ARCHIVE.md)) |
+| **Research archive** | Every enqueued match (before novelty gates) | `archive/matches.jsonl` — rotate+gzip; prune oldest sealed chunks at 50 GiB ([`ARCHIVE.md`](ARCHIVE.md)) |
 | **A′** | First-seen multi-brand coalition (≤5 brands, SAN gates) | Full alert → `alerts.jsonl` (**20 GiB** prune); keys stay in `novelty.db` |
 | **B′** | First-seen `(brand, host)`, skip routine labels | **Not emitted / not stored** under default `NOVELTY_TIERS=A` |
 
@@ -39,11 +39,19 @@ CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev resear
 | **A′ alerts** | `novelty.db` + `alerts.jsonl` | Untagged novel multi-brand coalitions after strip |
 | **Glue hubs** | Stripped before A′ via [`glue.txt`](../glue.txt) | Not an alert type — removes high-fan-out platforms from the diligence feed |
 | **Mega-apex suppress** | Same strip set via [`suppress.txt`](../suppress.txt) | Volume drop (near-zero-info infra) |
-| **Research archive** | `archive/matches.jsonl` | Post-strip enqueue + full `all_domains` ([`ARCHIVE.md`](ARCHIVE.md)) |
+| **Research archive** | `archive/matches.jsonl` | Post-**suppress** enqueue + `all_domains` (glue-only hubs included) ([`ARCHIVE.md`](ARCHIVE.md)) |
 
 Family-looking pairs (Optum×UHC) and scarce vendor-looking pairs (Gilead×Honeywell) **both land in the same `alerts.jsonl`** today. Glue hubs (dealer.com, files.com, Automattic, …) do **not** — they are stripped so A′ is not flooded with commodity SaaS co-tenants. That strip is for **diligence SNR**, not a claim that platform edges are worthless.
 
-**Interestingness ≈ improbability, by use-case:** A′ values rare coalitions; platform penetration values hub×customer counts over time (recoverable from archive — see below); mega-apex suppress is near-zero information either way.
+**Interestingness ≈ improbability, by use-case:** A′ values rare coalitions; platform penetration values hub×customer counts over time (recoverable from archive — see [`ARCHIVE.md`](ARCHIVE.md#platform-hubs-after-glue-strip-penetration-research)); mega-apex suppress is near-zero information either way.
+
+**Hoard vs screen:** keep the research archive (lossy past `ARCHIVE_MAX_TOTAL_BYTES`, default 50 GiB — off-box copy if you need older history). Screen A′ aggressively with glue. That asymmetry preserves technographic edges for a later feature without flooding the diligence product.
+
+### Alt-data positioning (what this is / is not)
+
+Public CT is raw material anyone can read (crt.sh, CertStream). Overlapping commercial shelves already exist: HG Insights–style **technographics** (multi-source install-base fabrics), CTScout-style **OV/EV org↔domain** attribution, and day-zero **first-cert** lead tools. Pitching this repo as “generic technographics” competes with deep wallets and thicker evidence.
+
+Shoestring differentiation that still fits: **time-stamped multi-brand / hub×customer edges on a curated ~752k watchlist**, with A′ as the rare diligence slice and the archive as the denser platform-penetration slice. Competing with HG Insights on coverage/verification is not realistic; selling a narrow CT-derived mosaic feed might be.
 
 ### Cold start: family vs vendor at first sight
 
@@ -61,7 +69,7 @@ Family-looking pairs (Optum×UHC) and scarce vendor-looking pairs (Gilead×Honey
 **Chosen handling (posterior, not first-fire):**
 
 1. **Emit unlabeled A′** — novel multi-brand co-occurrence.
-2. **Promote platforms later** — `mine_glue` on the archive → human review → add hub to [`glue.txt`](../glue.txt) → future A′ quiets. Early false A′ lines for that hub are accepted cold-start debt.
+2. **Promote platforms later** — `mine_glue` / `mine_hub_customers` on the archive → human review → add hub to [`glue.txt`](../glue.txt) → future A′ quiets. Early false A′ lines for that hub are accepted cold-start debt. **Ingest already captured hub-only leaves** (glue is not an inspect drop).
 3. **Confirm family later** — ownership overlay (deferred); not inventable from CT alone on day one.
 4. **Scarce vendor** — what stays rare after glue promotions and without an ownership link (Gilead×Honeywell class). A separate V′ stream is deferred until labels exist.
 5. **Do not auto-glue** on the first weird cross-sector pair.
@@ -137,16 +145,16 @@ Gold is not in reading 268k lines. Rank downstream:
 
 **Do not** suppress high-volume *brands* off the shared watchlist. Cut noise with glue strip, dedupe, and ranking.
 
-**Strip lists (one strip set at runtime; two files for ops only):**
-- [`suppress.txt`](../suppress.txt) — **mega-apex / infra volume** (AWS, Google, … still on `domains.txt`, stripped at egress)
-- [`glue.txt`](../glue.txt) — **high-fan-out platform glue** (ESP/WAF/DAM/CRS/MFT/deals/CMS/HR/ITSM/vertical website & estimate SaaS — not scarce vendor–customer pairs)
+**Strip lists (different jobs):**
+- [`suppress.txt`](../suppress.txt) — **mega-apex / infra volume** — the only inspect/archive drop list
+- [`glue.txt`](../glue.txt) — **high-fan-out platform glue** — A′ ignore only (ESP/WAF/DAM/CRS/MFT/deals/CMS/HR/ITSM/vertical website & estimate SaaS — not scarce vendor–customer pairs)
 
-`load_suppress_and_glue` concatenates both into **one** ignore `HashSet` — putting a name in either file has identical strip semantics. Keep two files so glue mining/churn does not muddy the stable mega-apex list. Keep corporate families out of either file.
+`load_suppress_and_glue` is for **A′ ignore** (NoveltySink). Do **not** pass it to watchlist inspect or hub-only certs never archive. Keep two files so glue mining/churn does not muddy the stable mega-apex list. Keep corporate families out of either file.
 
 | Lever | Mechanism | On the 15m dump |
 |---|---|---|
 | Mega-apex [`suppress.txt`](../suppress.txt) | Edge strip (infra volume) | Already applied at capture |
-| Glue [`glue.txt`](../glue.txt) | Merged at load (`GLUE_FILE`) | See `glue.txt` (human-reviewed; count drifts) |
+| Glue [`glue.txt`](../glue.txt) | A′ ignore (`GLUE_FILE`); not an inspect drop | See `glue.txt` (human-reviewed; count drifts) |
 | In-window dedupe | Sorted `matched_domains` (+ real fingerprint) | 267,680 → 225,473 (−16%) |
 | `rank_signal` Tier A coalitions | ≥2 non-glue `matched_keywords` | **1,874** events, **1,122** unique pairs |
 | `rank_signal` Tier B first host | First `(brand, host)` in file order | 194,957 (cold-start dump ≈ almost every host once) |
@@ -164,6 +172,14 @@ cargo run --release --example rank_signal -- \
 # Glue suspects (high partner fan-out) — human review only, never auto-merge
 cargo run --release --example mine_glue -- \
   /tmp/ct-ma-eval.jsonl suppress.txt 40
+
+# Archive: hub×customer + unknown high-fan-out apexes (PSL eTLD+1)
+cargo run --release --example mine_hub_customers -- \
+  /var/lib/ct-firehose-filter/archive glue.txt suppress.txt 40
+
+# Archive: admin/grafana/argocd hostnames (ASM extract — not A′)
+cargo run --release --example mine_admin -- \
+  /var/lib/ct-firehose-filter/archive 50
 ```
 
 **Glue method:** rank brands on multi-keyword certs by distinct co-brand partners × log(events). Promote only **high-fan-out commodity platforms** after posterior evidence (not on first weird pair) — ESP/WAF/DAM/CRS/MFT/CDN/LMS/status-page/API-docs/deals/CMS/HR/ITSM/vertical website/estimate SaaS. Leave corporate families and scarce B2B co-names alone. Do not hard-filter host labels. A′ lines stay unlabeled (family vs vendor is not decided at emit time).
@@ -328,11 +344,11 @@ Certificate Transparency is a public log of names orgs put on TLS certs. When tw
 
 Do **not** equate “~2k A′ lines” with commercial alpha. Multi-year full-CT backfill on Always Free is a **non-goal** (CT is multi-TB; no free bulk dump). Validate cheaply:
 
-1. **Stratified sample:** draw 50–100 A′ rows; tag each `family | platform | scarce_vendor | junk` (use [`audit_aprime`](../examples/audit_aprime.rs) if helpful).
-2. **Glue loop:** promote clear high-fan-out hubs into [`glue.txt`](../glue.txt) after review (`mine_glue`); accept early false A′ as cold-start debt.
+1. **Stratified sample (habit):** ~20 A′ rows/week; tag each `family | platform | scarce_vendor | junk` (use [`audit_aprime`](../examples/audit_aprime.rs) if helpful). Without labels you cannot tell if the trickle is useful.
+2. **Glue loop:** promote clear high-fan-out hubs into [`glue.txt`](../glue.txt) after review (`mine_glue`, `mine_hub_customers`); accept early false A′ as cold-start debt. Capture continues for hub-only leaves.
 3. **Case studies:** for the best `family` tags, check ownership/news — did co-naming precede a known subsidiary link or announced deal, or only confirm known ownership?
 4. **Optional crt.sh spot-check:** for a *handful* of known historical deals, query whether multi-brand certs appeared before news — not a 752k-brand warehouse replay.
-5. **Keep the live archive** — that is the shoestring “backfill going forward”; off-box sealed gz when disk is tight ([`ARCHIVE.md`](ARCHIVE.md)).
+5. **Keep the live archive** — that is the shoestring “backfill going forward”; sealed gz older than `ARCHIVE_MAX_TOTAL_BYTES` (50 GiB) are pruned ([`ARCHIVE.md`](ARCHIVE.md)).
 
 Only after (1)+(3) look promising should you invest in an ownership surprise filter or a separate vendor/platform product stream.
 
@@ -344,6 +360,6 @@ CERTSTREAM_URL=ws://127.0.0.1:8080/ RUST_LOG=warn \
   /path/to/domains.txt 900 suppress.txt /tmp/ct-ma-eval.jsonl
 ```
 
-`GLUE_FILE` defaults to `glue.txt` (merged with suppress at load).
+`GLUE_FILE` defaults to `glue.txt` (A′ ignore only; inspect uses `suppress.txt` alone).
 
 See also [`SCALE.md`](SCALE.md) (752k RAM/throughput gate), [`DEPLOY.md`](DEPLOY.md) (go-live vs decision-grade), [`CERTSTREAM.md`](CERTSTREAM.md) (ops), and the matching rules in the root README.

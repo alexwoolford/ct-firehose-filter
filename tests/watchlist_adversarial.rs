@@ -320,3 +320,19 @@ fn full_domains_txt_loads_and_matches_google_uniformly() {
     assert!(suppressed.inspect(&["s3.amazonaws.com"]).is_none());
     assert!(suppressed.inspect(&["www.google.com"]).is_none());
 }
+
+#[test]
+fn glue_only_leaf_is_not_fully_suppressed_at_inspect() {
+    // glue.txt is an A′ screen, not an inspect drop. Hub-only certs must still enqueue.
+    let w = wl_suppress(
+        &["pagerduty.com", "acme.com", "amazonaws.com"],
+        &["amazonaws.com"],
+    );
+    let ev = w
+        .inspect(&["acme.hosted-status.pagerduty.com"])
+        .expect("glue-only leaf still enqueues for archive");
+    assert_eq!(implicated(&ev), vec!["pagerduty.com"]);
+    let mega = w.inspect_outcome(&["s3.amazonaws.com"], FrameMeta::default());
+    assert!(mega.fully_suppressed);
+    assert!(mega.event.is_none());
+}

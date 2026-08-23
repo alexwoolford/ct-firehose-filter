@@ -58,7 +58,7 @@ pub struct Config {
     pub certstream_url: String,
     pub watchlist_file: PathBuf,
     pub suppress_file: PathBuf,
-    /// Marketing/WAF/DAM glue apexes merged into the suppress set at load.
+    /// Platform glue apexes: A′ strip only (not merged into inspect/archive drop).
     pub glue_file: PathBuf,
     pub egress: EgressBackend,
     pub novelty_db: PathBuf,

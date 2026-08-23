@@ -3,9 +3,10 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use ct_firehose_filter::{
-    load_domain_file, load_suppress_and_glue, run_pipeline_with_archive, serve_status,
-    write_config_snapshot, Config, DomainWatchlist, EgressBackend, HotWatchlist, MatchArchive,
-    NoveltyPolicy, NoveltySink, PipelineMetrics, StartupError, StatusState, StdoutSink,
+    archive_disk_warn, load_domain_file, load_suppress_file, run_pipeline_with_archive,
+    serve_status, write_config_snapshot, Config, DomainWatchlist, EgressBackend, HotWatchlist,
+    MatchArchive, NoveltyPolicy, NoveltySink, PipelineMetrics, StartupError, StatusState,
+    StdoutSink,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -16,11 +17,12 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 fn build_watchlist(
     watch_path: &std::path::Path,
     suppress_path: &std::path::Path,
-    glue_path: &std::path::Path,
 ) -> Result<DomainWatchlist, StartupError> {
     let names = load_domain_file(watch_path).map_err(|e| StartupError::Watchlist(e.to_string()))?;
-    let suppress = load_suppress_and_glue(suppress_path, glue_path)
-        .map_err(|e| StartupError::Watchlist(e.to_string()))?;
+    // Inspect/archive drop list is mega-apex suppress only. glue.txt strips A′
+    // in NoveltySink — do not merge it here or hub-only leaves are never archived.
+    let suppress =
+        load_suppress_file(suppress_path).map_err(|e| StartupError::Watchlist(e.to_string()))?;
     Ok(DomainWatchlist::new_with_suppress(&names, &suppress))
 }
 
@@ -46,11 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
 
     let started = Instant::now();
-    let watchlist = build_watchlist(
-        &config.watchlist_file,
-        &config.suppress_file,
-        &config.glue_file,
-    )?;
+    let watchlist = build_watchlist(&config.watchlist_file, &config.suppress_file)?;
     tracing::info!(
         watchlist = watchlist.len(),
         suppress = watchlist.suppress_len(),
@@ -58,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         watchlist_file = %config.watchlist_file.display(),
         suppress_file = %config.suppress_file.display(),
         glue_file = %config.glue_file.display(),
-        "loaded domain watchlist"
+        "loaded domain watchlist (glue is A′ strip only; not an inspect drop)"
     );
     if watchlist.is_empty() {
         tracing::warn!("watchlist is empty; every certificate will be dropped");
@@ -115,8 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match tokio::task::spawn_blocking({
                     let watch_path = watch_path.clone();
                     let suppress_path = suppress_path.clone();
-                    let glue_path = glue_path.clone();
-                    move || build_watchlist(&watch_path, &suppress_path, &glue_path)
+                    move || build_watchlist(&watch_path, &suppress_path)
                 })
                 .await
                 {
@@ -198,11 +195,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         let bytes = arch.total_bytes_on_disk();
-                        if bytes >= arch.disk_warn_bytes() {
+                        if archive_disk_warn(
+                            bytes,
+                            arch.disk_warn_bytes(),
+                            arch.max_total_bytes(),
+                        ) {
                             tracing::warn!(
                                 archive_dir_bytes = bytes,
                                 warn_at = arch.disk_warn_bytes(),
-                                "match research archive disk usage above ARCHIVE_DISK_WARN_BYTES"
+                                max_total_bytes = arch.max_total_bytes(),
+                                "match research archive disk usage above warn threshold (80% of ARCHIVE_MAX_TOTAL_BYTES or ARCHIVE_DISK_WARN_BYTES)"
                             );
                         }
                     }

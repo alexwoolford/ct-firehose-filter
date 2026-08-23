@@ -29,9 +29,11 @@ pub use alerts_file::{
 };
 
 pub use archive::{
-    default_archive_dir, sha256_file, sha256_hex, write_config_snapshot, ArchiveConfig,
-    ConfigProvenance, MatchArchive, MatchArchiveEvent, DEFAULT_ARCHIVE_DISK_WARN_BYTES,
-    DEFAULT_ARCHIVE_LIVE_NAME, DEFAULT_ARCHIVE_MAX_BYTES, MATCH_ARCHIVE_SCHEMA_VERSION,
+    archive_disk_warn, compact_all_domains, default_archive_dir, prune_sealed_to_budget,
+    sha256_file, sha256_hex, write_config_snapshot, ArchiveConfig, ConfigProvenance, MatchArchive,
+    MatchArchiveEvent, DEFAULT_ARCHIVE_DISK_WARN_BYTES, DEFAULT_ARCHIVE_LIVE_NAME,
+    DEFAULT_ARCHIVE_MAX_ALL_DOMAINS, DEFAULT_ARCHIVE_MAX_BYTES, DEFAULT_ARCHIVE_MAX_TOTAL_BYTES,
+    MATCH_ARCHIVE_SCHEMA_VERSION,
 };
 
 pub use batch::{BatchConfig, Batcher, BATCH_MAX_BYTES, BATCH_MAX_MESSAGES};

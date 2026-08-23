@@ -45,8 +45,10 @@ impl InspectOutcome {
 /// `amazonaws.com`). Brand-in-label and hyphen-token fuzzy matching are out of
 /// scope — they false-positive heavily on large lists.
 ///
-/// Optional **suppress** names (CT mega-apexes) are stripped before emit: a cert
-/// egresses only if at least one non-suppressed watchlist name remains.
+/// Optional **suppress** names (CT mega-apexes in `suppress.txt`) are stripped
+/// before emit: a cert egresses only if at least one non-suppressed watchlist
+/// name remains. Platform glue (`glue.txt`) is **not** part of this set — it
+/// strips A′ later so hub-only leaves still enqueue and archive.
 pub struct DomainWatchlist {
     names: HashSet<String>,
     suppress: HashSet<String>,
@@ -243,7 +245,9 @@ pub fn load_suppress_file(path: impl AsRef<Path>) -> Result<Vec<String>, Keyword
     load_domain_file(path)
 }
 
-/// Merge mega-apex suppress + SaaS-glue lists (order irrelevant; duplicates ok).
+/// Merge mega-apex suppress + SaaS-glue lists for **A′ ignore** (NoveltySink).
+/// Do **not** pass this set to [`DomainWatchlist::new_with_suppress`] — that would
+/// drop glue-only leaves from the archive. Inspect uses [`load_suppress_file`] only.
 pub fn load_suppress_and_glue(
     suppress_path: impl AsRef<Path>,
     glue_path: impl AsRef<Path>,

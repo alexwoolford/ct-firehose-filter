@@ -10,10 +10,10 @@ is best-effort only. **Product go-live** = `EGRESS=novelty` (in-process A′ →
 ([`docs/DEPLOY.md`](docs/DEPLOY.md)). Scale: [`docs/SCALE.md`](docs/SCALE.md). Ops:
 [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md). Signal quality: [`docs/SIGNAL.md`](docs/SIGNAL.md).
 
-Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). Two egress strip lists (merged in code; ops taxonomy only):
+Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). Two lists, **two jobs** (do not merge them at inspect):
 
-- [`suppress.txt`](suppress.txt) — **mega-apex / infra volume** (Amazon, Google, … may stay on `domains.txt` but are stripped here)
-- [`glue.txt`](glue.txt) — **platform / co-tenant glue** (ESP/WAF/DAM/CRS/WP apexes that forge fake multi-brand SANs)
+- [`suppress.txt`](suppress.txt) — **mega-apex / infra volume** — the only ingest drop list (Amazon, Google, … may stay on `domains.txt` but never enqueue)
+- [`glue.txt`](glue.txt) — **platform / co-tenant glue** — A′ screen only (ESP/WAF/DAM/CRS/WP). Hub-only leaves still archive so customers can be mined later.
 
 Do not put corporate families in either file.
 
@@ -31,7 +31,7 @@ watchlist match (enqueue)
 
 | Stream | What it is | On disk (prod) |
 |---|---|---|
-| **Research archive** | All enqueued matches (single- and multi-brand) | `archive/matches.jsonl` — rotate+gzip, **no** total prune |
+| **Research archive** | All enqueued matches (single- and multi-brand) | `archive/matches.jsonl` — rotate+gzip; prune oldest sealed chunks at `ARCHIVE_MAX_TOTAL_BYTES` (default 50 GiB) |
 | **A′** | First-seen multi-brand coalition (high-SNR diligence) | `alerts.jsonl` (20 GiB prune) + coalition keys in `novelty.db` (kept) |
 | **B′** | First-seen host under a brand (noisy tip churn) | **Not written** unless you opt in `NOVELTY_TIERS=A,B` |
 
@@ -49,8 +49,9 @@ For each certificate SAN:
 
 1. Strip `*.`, lowercase.
 2. Walk every DNS **suffix** of the host against the watchlist HashSet (`s3.amazonaws.com` → check `s3.amazonaws.com`, then `amazonaws.com`, …).
-3. Drop implicated names that appear in `SUPPRESS_FILE` + `GLUE_FILE` (defaults [`suppress.txt`](suppress.txt) + [`glue.txt`](glue.txt)).
-4. **Emit only if a non-suppressed watchlist name remains.** Recompute `matched_domains` to SANs that still hit those names. Missing suppress/glue file ⇒ that list is empty.
+3. Drop implicated names that appear in `SUPPRESS_FILE` (default [`suppress.txt`](suppress.txt)) — mega-apex infra only.
+4. **Enqueue + archive if a non-suppressed watchlist name remains** (including glue-only hubs). Recompute `matched_domains` to SANs that still hit those names. Missing suppress file ⇒ empty suppress set.
+5. **A′ only:** strip `GLUE_FILE` ∪ `SUPPRESS_FILE` so high-fan-out platforms do not become diligence coalitions. Missing glue file ⇒ no extra A′ strip.
 
 Watchlist file entries are normalized with the Public Suffix List when loaded (so `www.google.com` on the list becomes `google.com`). Suppress does **not** edit the shared `domains.txt`.
 
@@ -161,7 +162,7 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `src/novelty_sink.rs` | in-process A′ egress (`EGRESS=novelty`) |
 | `src/status.rs` | `/healthz` + `/status` JSON (loopback scrape) |
 | `src/alerts_file.rs` | chunk rotate + total byte budget + gzip |
-| `glue.txt` | SaaS/marketing glue apexes (merged with suppress) |
+| `glue.txt` | SaaS/marketing glue apexes (**A′ strip only** — not an inspect drop) |
 | `suppress.txt` | default CT mega-apex suppress (this filter only) |
 | `Dockerfile` | multi-stage filter image |
 | `docker-compose.yml` | init + CertStream + filter (`EGRESS=stdout`) |
@@ -172,6 +173,8 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `examples/audit_screened_out.rs` | suppress/glue / high-churn sample audit |
 | `examples/watchlist_scale_bench.rs` | local 1k→752k RSS / ns/op bench |
 | `examples/mine_glue.rs` | dump-driven glue candidate ranking |
+| `examples/mine_hub_customers.rs` | archive hub×customer + unknown high-fan-out apexes |
+| `examples/mine_admin.rs` | archive admin/grafana/argocd/oktaadmin hostnames (ASM, not A′) |
 | `src/config.rs` | typed env config + fail-fast `validate()` |
 | `src/parse.rs` | partial deserialize of `data.leaf_cert.all_domains` |
 | `src/watchlist.rs` | PSL eTLD+1 HashSet + host-suffix match + suppress strip |
