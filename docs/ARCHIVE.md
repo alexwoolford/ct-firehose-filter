@@ -6,9 +6,14 @@ for offline research 3–5 years from now.
 
 ## Why
 
-A′ alone cannot answer “what would the feed look like under different glue / SAN caps?”
+A′ alone cannot answer “what would the feed look like under different SAN caps?”
 Renewals, single-brand matches, and oversize/mega-SAN decisions leave little or no
 payload on disk. Every week without an archive is a week you cannot replay.
+
+Prod cold start is `NOVELTY_CALIBRATE_SECS` (prod **6h**) plus live event-df /
+partner-degree. Hub-only leaves still enqueue so platforms (Zendesk/Shopify/AWS-class
+tenants) can be mined later. Partner-degree does **not** replace Amazon (solo hub
+leaves never raise partner count). Technographics live in the archive, not in A′.
 
 ## What lands where (not A′ / B′ novelty tiers)
 
@@ -16,35 +21,37 @@ Do **not** confuse these with novelty **A′ / B′** alerts ([`SIGNAL.md`](SIGN
 
 | Stream | Path | Role |
 |---|---|---|
-| **Product (A′)** | `novelty.db` + `alerts.jsonl` | Untagged first-seen multi-brand diligence leads (family and scarce vendor mixed; not equity-proven) |
-| **Research archive** | `ARCHIVE_DIR/matches.jsonl` (+ `.*.gz`) | Every **enqueued** match + full SAN list (includes single-brand; **not** a B′ feed) |
-| **Config provenance** | `ARCHIVE_DIR/config_snapshots/<id>/` | Watchlist / suppress / glue copies + `meta.json` |
+| **Product (A′)** | `novelty.db` + `alerts.jsonl` | First-seen low-df×low-df after listen-first event-df + partner-degree |
+| **Research archive** | `ARCHIVE_DIR/matches.jsonl` (+ `.*.gz`) | Every **enqueued** match (includes single-brand; **not** a B′ feed). `all_domains` compact at 32 names by default (`ARCHIVE_MAX_ALL_DOMAINS=0` stores every SAN) |
+| **Config provenance** | `ARCHIVE_DIR/config_snapshots/<id>/` | Watchlist copy + optional ignore-file copies + `meta.json` |
 
-### Platform hubs after glue strip (penetration research)
+### Platform hubs (penetration research)
 
-Gluing a hub (PagerDuty, Blackboard, Files.com, …) is **not** “delete customer evidence.” It only keeps high-fan-out platforms out of the **A′ diligence** feed. Inspect/archive **do not** use `glue.txt`.
+Screening a hub out of A′ (PagerDuty, Blackboard, Files.com, …) is **not** “delete
+customer evidence.” Live event-df / partner-degree keep high-fan-out platforms out
+of the **A′ diligence** feed. Inspect/archive keep every watchlist hit.
 
-| Path | After hub is in [`glue.txt`](../glue.txt) |
+| Path | High-df / packing hub |
 |---|---|
-| **A′** | Hub stripped → usually no multi-brand equity-style alert |
-| **Archive** | Hub-only and mixed leaves still enqueue (unless the only hits are `suppress.txt` mega-apexes). **`all_domains` still lists** hub SANs. Oversized SAN lists are compacted (`ARCHIVE_MAX_ALL_DOMAINS`, default 32); `san_count` remains the raw leaf size. |
+| **A′** | Usually no multi-brand equity-style alert |
+| **Archive** | Hub-only, mixed, and infra-only leaves enqueue. **`all_domains` still lists** hub/infra SANs. Oversized SAN lists are compacted (`ARCHIVE_MAX_ALL_DOMAINS`, default 32); `san_count` remains the raw leaf size. |
 
-`matched_keywords` on archive lines are **pre-A′** (post-suppress only), so the hub remains when it was a watchlist hit. Recover hub×customer edges offline:
+`matched_keywords` on archive lines are **pre-A′** (full watchlist implication), so the hub remains when it was a watchlist hit. Recover hub×customer edges offline:
 
 ```bash
 cargo run --release --example mine_hub_customers -- \
-  /var/lib/ct-firehose-filter/archive glue.txt suppress.txt 40
+  /var/lib/ct-firehose-filter/archive
 ```
 
-Spot-check on ~2.1M recent archive rows (live `matches.jsonl` + 3 sealed gz): mixed leaves already show **recognizable platform×customer edges** (e.g. Imperva with PwC / ETS / Zurich / Yodlee / Amadeus / Vodafone / CBRE; ExactTarget with Aetna / Standard Bank). Automattic-style WordPress packing and naive two-label eTLD+1 mines drown in ccTLD junk (`com.mx`) — use this example (Public Suffix), not a DIY splitter. Hub-only PagerDuty-class rows will show up **after** this ingest change; historically those were `fully_suppressed`.
+Spot-check on ~2.1M recent archive rows (live `matches.jsonl` + 3 sealed gz): mixed leaves already show **recognizable platform×customer edges** (e.g. Imperva with PwC / ETS / Zurich / Yodlee / Amadeus / Vodafone / CBRE; ExactTarget with Aetna / Standard Bank). Automattic-style WordPress packing and naive two-label eTLD+1 mines drown in ccTLD junk (`com.mx`) — use this example (Public Suffix), not a DIY splitter. Hub-only and infra-only rows archive under capture-first; dump-era inspect-drop used to skip those as `fully_suppressed`.
 
-1. Known hubs from [`glue.txt`](../glue.txt) (classifier, not a capture allowlist).
+1. Optional: pass your own classifier of known hubs (not a capture allowlist).
 2. Scan `all_domains` for other eTLD+1s on the same cert.
-3. Rank unknown high-fan-out apexes the same way — promote to glue after review. Ingest already kept them.
+3. Rank unknown high-fan-out apexes the same way. Ingest already kept them.
 
-That offline slice is a **second product** (technographic / install-base mosaic), not M&A A′. Do not un-glue hubs into A′ to “keep” customers — mine the archive instead.
+That offline slice is a **second product** (technographic / install-base mosaic), not M&A A′. Do not un-screen hubs into A′ to “keep” customers — mine the archive instead.
 
-**Limit:** only `suppress.txt` mega-apex-only leaves are `fully_suppressed` and never enqueued. ExactTarget-scale packs still archive, but `all_domains` is sampled. See cold-start / posterior glue in [`SIGNAL.md`](SIGNAL.md#what-a-actually-is-streams-honesty).
+**Limit:** inspect no longer drops. Rolling 50 GiB archive-dir prune is the only loss (time), plus SAN compact at 32. ExactTarget-scale packs still archive with sampled `all_domains`. See cold-start / posterior platform mining in [`SIGNAL.md`](SIGNAL.md#what-a-actually-is-streams-honesty).
 
 ### Infosec extract (not A′)
 
@@ -68,7 +75,7 @@ Each JSONL line:
 | `snapshot_id` | Directory name under `config_snapshots/` |
 | `all_domains` | Leaf SAN list at inspect time (bounded sample if truncated) |
 | `all_domains_truncated` | `true` when `all_domains` was compacted; `san_count` is still the raw leaf size |
-| `matched_domains` / `matched_keywords` | Watchlist hits (**post-suppress, pre-glue** — hubs remain) |
+| `matched_domains` / `matched_keywords` | Watchlist hits (full implication — hubs remain) |
 | `seen` / `source` / `fingerprint` / `san_count` | From CertStream / inspect |
 | `drop_stage` | Always `enqueued` here (novelty gates are product-side) |
 
@@ -97,9 +104,12 @@ Tagged enum (`tier` discriminant). A′ and B′ keys are **not** written as nul
 | `ARCHIVE_MAX_ALL_DOMAINS` | `32` — compact `all_domains` above this; `0` = store every SAN |
 | `GIT_SHA` | Optional; recorded in snapshots (`unknown` if unset) |
 
-This **is** lossy for research older than the cap. Copy sealed `matches.jsonl.*.gz` off-box if you need
-history beyond ~50 GiB compressed. Glue-only enqueue after capture-first will fill the budget faster
-(~0.5–3 GB/day compressed if SAN lists are large).
+This **is** lossy for research older than the cap. Prune deletes oldest **sealed** chunks under
+the **archive directory** until that dir fits 50 GiB. It does **not** watch host `df`, and it
+**never** deletes the live `matches.jsonl` or `config_snapshots/`. If `/` is smaller than 50 GiB
+(typical unexpanded OCI LVM), the **host can fill first**. Grow LVM before relying on the window.
+Copy sealed `matches.jsonl.*.gz` off-box if you need history beyond ~50 GiB compressed. Hub-only
+enqueue after capture-first fills the budget faster (~0.5–3 GB/day compressed if SAN lists are large).
 
 **Always Free boot disk gotcha:** a ~**200 GB** OCI boot volume often ships with only ~**45 GB** in LVM (`ocivolume-root` ≈30 GB on `/` + `ocivolume-oled` ≈15 GB on `/var/oled`). **`/var/oled` is Oracle diagnostics — not spare app capacity.** The rest of the disk may sit as **unallocated free space** while `/` fills with Docker + archive.
 

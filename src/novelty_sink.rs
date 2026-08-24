@@ -20,6 +20,7 @@ use crate::watchlist::load_suppress_and_glue;
 struct NoveltyInner {
     store: NoveltyStore,
     alerts: BufWriter<std::fs::File>,
+    candidates: Option<BufWriter<std::fs::File>>,
 }
 
 /// Local durable product sink (SQLite + alerts.jsonl).
@@ -30,6 +31,7 @@ pub struct NoveltySink {
     ignore: HashSet<String>,
     policy: NoveltyPolicy,
     alerts_cfg: AlertsFileConfig,
+    candidates_cfg: Option<AlertsFileConfig>,
     metrics: Option<Arc<PipelineMetrics>>,
 }
 
@@ -78,6 +80,7 @@ impl NoveltySink {
             ensure_parent_dir(parent).map_err(|e| EgressError::Sink(e.to_string()))?;
         }
 
+        // Optional operator ignore (`SUPPRESS_FILE` / `GLUE_FILE`). Unset/empty = no prior.
         let ignore: HashSet<String> = load_suppress_and_glue(suppress_path, glue_path)
             .map_err(|e| EgressError::Sink(e.to_string()))?
             .into_iter()
@@ -85,13 +88,40 @@ impl NoveltySink {
             .collect();
 
         let store = NoveltyStore::open(db_path).map_err(|e| EgressError::Sink(e.to_string()))?;
+        store
+            .seed_degree_floor(
+                ignore.iter(),
+                policy.max_partner_degree.max(policy.max_brand_df),
+            )
+            .map_err(|e| EgressError::Sink(e.to_string()))?;
         let alerts = open_append(&alerts_cfg).map_err(|e| EgressError::Sink(e.to_string()))?;
 
+        let (candidates_cfg, candidates) = match std::env::var("NOVELTY_CANDIDATES") {
+            Ok(raw) if !raw.trim().is_empty() => {
+                let path = PathBuf::from(raw.trim());
+                if let Some(parent) = path.parent() {
+                    ensure_parent_dir(parent).map_err(|e| EgressError::Sink(e.to_string()))?;
+                }
+                let cfg = AlertsFileConfig::from_env(&path);
+                let w = open_append(&cfg).map_err(|e| EgressError::Sink(e.to_string()))?;
+                (Some(cfg), Some(w))
+            }
+            _ => (None, None),
+        };
+
+        let mut policy = policy;
+        policy.emit_candidates = candidates.is_some();
+
         Ok(Self {
-            inner: Mutex::new(NoveltyInner { store, alerts }),
+            inner: Mutex::new(NoveltyInner {
+                store,
+                alerts,
+                candidates,
+            }),
             ignore,
             policy,
             alerts_cfg,
+            candidates_cfg,
             metrics: None,
         })
     }
@@ -124,7 +154,19 @@ impl EgressSink for NoveltySink {
             .map_err(|_| EgressError::Sink("novelty lock poisoned".into()))?;
 
         for ev in items {
-            let (alerts, stats) = process_match(&inner.store, &self.ignore, &self.policy, ev)
+            let mut policy = self.policy;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+                .unwrap_or(0);
+            policy.calibrating = inner
+                .store
+                .is_calibrating(now, policy.calibrate_secs, policy.calibrate_events)
+                .map_err(|e| EgressError::Sink(e.to_string()))?;
+            if let Some(metrics) = &self.metrics {
+                metrics.set_novelty_calibrating(policy.calibrating);
+            }
+            let (alerts, stats) = process_match(&inner.store, &self.ignore, &policy, ev)
                 .map_err(|e| EgressError::Sink(e.to_string()))?;
             if let Some(metrics) = &self.metrics {
                 metrics.record_novelty(&stats);
@@ -134,6 +176,15 @@ impl EgressSink for NoveltySink {
                     serde_json::to_vec(&alert).map_err(|e| EgressError::Sink(e.to_string()))?;
                 write_line(&self.alerts_cfg, &mut inner.alerts, &line)
                     .map_err(|e| EgressError::Sink(e.to_string()))?;
+            }
+            if let (Some(cand), Some(cfg), Some(w)) = (
+                stats.candidate.as_ref(),
+                self.candidates_cfg.as_ref(),
+                inner.candidates.as_mut(),
+            ) {
+                let line =
+                    serde_json::to_vec(cand).map_err(|e| EgressError::Sink(e.to_string()))?;
+                write_line(cfg, w, &line).map_err(|e| EgressError::Sink(e.to_string()))?;
             }
         }
         Ok(())
@@ -167,10 +218,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let db = dir.join("novelty.db");
         let alerts = dir.join("alerts.jsonl");
-        let suppress = dir.join("suppress.txt");
-        let glue = dir.join("glue.txt");
-        fs::write(&suppress, "").unwrap();
-        fs::write(&glue, "").unwrap();
+        let empty = PathBuf::new();
 
         let alerts_cfg = AlertsFileConfig {
             path: alerts.clone(),
@@ -183,8 +231,8 @@ mod tests {
         let sink = NoveltySink::open_with_cfg(
             &db,
             &alerts,
-            &suppress,
-            &glue,
+            &empty,
+            &empty,
             NoveltyPolicy::default(),
             false,
             alerts_cfg,

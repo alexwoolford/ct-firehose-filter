@@ -39,6 +39,16 @@ services:
       NOVELTY_REQUIRE_DB: ${NOVELTY_REQUIRE_DB:-0}
       NOVELTY_TIERS: ${NOVELTY_TIERS:-A}
       NOVELTY_MAX_COALITION: ${NOVELTY_MAX_COALITION:-5}
+      # Partner-degree cap for A′ (learned packing hubs).
+      NOVELTY_MAX_PARTNER_DEGREE: ${NOVELTY_MAX_PARTNER_DEGREE:-25}
+      # Event-df cap for A′ (solo+multi appearances). Mega-apex warms here, not partner degree.
+      NOVELTY_MAX_BRAND_DF: ${NOVELTY_MAX_BRAND_DF:-25}
+      # Listen-first: mute alerts.jsonl until secs AND/OR multi-brand events (0 = off).
+      # Product default 6h: empty novelty.db must not page AWS×customer.
+      NOVELTY_CALIBRATE_SECS: ${NOVELTY_CALIBRATE_SECS:-21600}
+      NOVELTY_CALIBRATE_EVENTS: ${NOVELTY_CALIBRATE_EVENTS:-0}
+      # Optional learning feed (first-seen coalitions with degrees). Empty = off.
+      NOVELTY_CANDIDATES: ${NOVELTY_CANDIDATES:-}
       # Chunk + total budget (multi-year headroom on ~200GB boot volume).
       NOVELTY_ALERTS_MAX_BYTES: ${NOVELTY_ALERTS_MAX_BYTES:-268435456}
       NOVELTY_ALERTS_MAX_TOTAL_BYTES: ${NOVELTY_ALERTS_MAX_TOTAL_BYTES:-21474836480}

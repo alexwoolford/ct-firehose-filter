@@ -3,10 +3,9 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use ct_firehose_filter::{
-    archive_disk_warn, load_domain_file, load_suppress_file, run_pipeline_with_archive,
-    serve_status, write_config_snapshot, Config, DomainWatchlist, EgressBackend, HotWatchlist,
-    MatchArchive, NoveltyPolicy, NoveltySink, PipelineMetrics, StartupError, StatusState,
-    StdoutSink,
+    archive_disk_warn, load_domain_file, run_pipeline_with_archive, serve_status,
+    write_config_snapshot, Config, DomainWatchlist, EgressBackend, HotWatchlist, MatchArchive,
+    NoveltyPolicy, NoveltySink, PipelineMetrics, StartupError, StatusState, StdoutSink,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -14,16 +13,10 @@ use tokio_util::sync::CancellationToken;
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-fn build_watchlist(
-    watch_path: &std::path::Path,
-    suppress_path: &std::path::Path,
-) -> Result<DomainWatchlist, StartupError> {
+fn build_watchlist(watch_path: &std::path::Path) -> Result<DomainWatchlist, StartupError> {
     let names = load_domain_file(watch_path).map_err(|e| StartupError::Watchlist(e.to_string()))?;
-    // Inspect/archive drop list is mega-apex suppress only. glue.txt strips A′
-    // in NoveltySink — do not merge it here or hub-only leaves are never archived.
-    let suppress =
-        load_suppress_file(suppress_path).map_err(|e| StartupError::Watchlist(e.to_string()))?;
-    Ok(DomainWatchlist::new_with_suppress(&names, &suppress))
+    // Capture every watchlist hit. A′ screens in NoveltySink (event-df / degree).
+    Ok(DomainWatchlist::new(&names))
 }
 
 fn env_flag(key: &str, default: bool) -> bool {
@@ -48,15 +41,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env()?;
 
     let started = Instant::now();
-    let watchlist = build_watchlist(&config.watchlist_file, &config.suppress_file)?;
+    let watchlist = build_watchlist(&config.watchlist_file)?;
     tracing::info!(
         watchlist = watchlist.len(),
-        suppress = watchlist.suppress_len(),
         elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         watchlist_file = %config.watchlist_file.display(),
-        suppress_file = %config.suppress_file.display(),
-        glue_file = %config.glue_file.display(),
-        "loaded domain watchlist (glue is A′ strip only; not an inspect drop)"
+        "loaded domain watchlist (every hit archives)"
     );
     if watchlist.is_empty() {
         tracing::warn!("watchlist is empty; every certificate will be dropped");
@@ -112,15 +102,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let reload_started = Instant::now();
                 match tokio::task::spawn_blocking({
                     let watch_path = watch_path.clone();
-                    let suppress_path = suppress_path.clone();
-                    move || build_watchlist(&watch_path, &suppress_path)
+                    move || build_watchlist(&watch_path)
                 })
                 .await
                 {
                     Ok(Ok(updated)) => {
                         tracing::info!(
                             watchlist = updated.len(),
-                            suppress = updated.suppress_len(),
                             elapsed_ms = u64::try_from(reload_started.elapsed().as_millis())
                                 .unwrap_or(u64::MAX),
                             "hot-swapping domain watchlist"
@@ -275,7 +263,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::warn!(
                 db = %config.novelty_db.display(),
                 alerts = %config.novelty_alerts.display(),
-                "EGRESS=novelty — A′ alerts to local rotated JSONL"
+                max_partner_degree = policy.max_partner_degree,
+                max_brand_df = policy.max_brand_df,
+                calibrate_secs = policy.calibrate_secs,
+                calibrate_events = policy.calibrate_events,
+                "EGRESS=novelty — A′ alerts to local rotated JSONL (listen-first event-df)"
             );
             run_pipeline_with_archive(
                 config.certstream_url,

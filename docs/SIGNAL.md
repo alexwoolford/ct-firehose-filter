@@ -1,6 +1,6 @@
 # Is there gold in the CT feed?
 
-Assessment of a **15-minute tip capture** (full ~752k watchlist + [`suppress.txt`](../suppress.txt)) against the original early-hint intent. Capture a dump with [`live_smoke`](../examples/live_smoke.rs) (example path: `/tmp/ct-ma-eval.jsonl`; the numbers below are from one such run: 267,680 events, 0 reconnects).
+Assessment of a **15-minute dump-era tip capture** (full ~752k watchlist; inspect then used a filled suppress list) against the original early-hint intent. Capture a dump with [`live_smoke`](../examples/live_smoke.rs) (example path: `/tmp/ct-ma-eval.jsonl`; the numbers below are from one such run: 267,680 events, 0 reconnects). Those dump-era glue/suppress files are **not** the product.
 
 ## Three streams (A′ / B′ vs research archive)
 
@@ -8,21 +8,23 @@ A′ and B′ are **novelty alert types** (both “first-seen”), not “matche
 
 ```text
 watchlist match (enqueue)
-    ├─→ archive/matches.jsonl     research: every enqueue + full SAN list
+    ├─→ archive/matches.jsonl     research: every watchlist hit (SAN list may be compacted)
     └─→ novelty
-          ├─ A′  ≥2 brands, first coalition → alerts.jsonl + novelty.db
+          ├─ A′  ≥2 low-df brands, first coalition after burn-in → alerts.jsonl + novelty.db
           └─ B′  first (brand, host) — OFF unless NOVELTY_TIERS includes B
 ```
 
 | Stream | Meaning | Prod disk |
 |---|---|---|
-| **Research archive** | Every enqueued match (before novelty gates) | `archive/matches.jsonl` — rotate+gzip; prune oldest sealed chunks at 50 GiB ([`ARCHIVE.md`](ARCHIVE.md)) |
-| **A′** | First-seen multi-brand coalition (≤5 brands, SAN gates) | Full alert → `alerts.jsonl` (**20 GiB** prune); keys stay in `novelty.db` |
+| **Research archive (T′)** | Every **enqueued** match — every watchlist hit | `archive/matches.jsonl` — rotate+gzip; prune oldest **sealed** chunks when the **archive directory** hits 50 GiB ([`ARCHIVE.md`](ARCHIVE.md)). Not a host `df` cap. `all_domains` compact at 32 names by default |
+| **A′** | First-seen low-df×low-df coalition (≤5 brands, SAN + degree gates, optional burn-in) | Full alert → `alerts.jsonl` (**20 GiB** prune); keys stay in `novelty.db` |
 | **B′** | First-seen `(brand, host)`, skip routine labels | **Not emitted / not stored** under default `NOVELTY_TIERS=A` |
 
 “All A′ forever” is false for JSONL payloads: oldest `alerts.jsonl` chunks can be deleted at the 20 GiB budget while `novelty.db` coalition keys remain (so renewals stay quiet). Single-brand matches are **not** “cached B′”; with the archive on they land in `matches.jsonl`, which is still not a B′ feed.
 
-**Do not union A′ with the archive to “get all events.”** The archive is every **enqueued** match. A′ is a thinner derived view of that same stream (first-seen multi-brand after glue∪suppress ignore). Join A′ → archive on `event.fingerprint` for full `all_domains`. Mega-apex-only watchlist hits never enqueue — they are in neither file.
+**Do not union A′ with the archive to “get all events.”** The archive is every watchlist hit. A′ is a thinner derived view (first-seen low-df×low-df after burn-in). Join A′ → archive on `event.fingerprint` for `all_domains` (may be a 32-name sample; `san_count` is raw).
+
+**Two products, one capture.** Inspect does not drop. A′ emits only **first-seen low-df×low-df** coalitions after a listen-first burn-in (`NOVELTY_CALIBRATE_SECS` default **21600** in prod compose / `NOVELTY_CALIBRATE_EVENTS`). A brand is high-df when its **event count** (`NOVELTY_MAX_BRAND_DF`, default 25) or **partner degree** (`NOVELTY_MAX_PARTNER_DEGREE`, default 25) hits the cap. Mega-apex CT (Amazon, Azure, …) is almost all solo: event-df saturates in seconds; partner-degree may never move. High-df×customer is T′ in the archive (`mine_hub_customers`). Unlabeled new SaaS can still look like A′ after unmute — accepted; mine the archive later. Optional `NOVELTY_CANDIDATES` JSONL is the learning feed (first-seen coalitions + degrees) — not the hedge-fund pager. This repo ships **no** name lists.
 
 ## Intent (mosaic tile)
 
@@ -39,15 +41,15 @@ CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev resear
 | Thing | Where it lives | Distinguishable? |
 |---|---|---|
 | **A′ alerts** | `novelty.db` + `alerts.jsonl` | Untagged novel multi-brand coalitions after strip |
-| **Glue hubs** | A′ ignore via [`glue.txt`](../glue.txt) — **not** an inspect drop | Not an alert type — removes high-fan-out platforms from the diligence feed; hub-only leaves still archive |
-| **Mega-apex suppress** | Inspect **drop** when every implicated name is in [`suppress.txt`](../suppress.txt); those names are also in the A′ ignore set | Volume drop (near-zero-info infra). Mixed certs still enqueue; `all_domains` keeps the mega-apex SAN |
-| **Research archive** | `archive/matches.jsonl` | Post-**suppress** enqueue + `all_domains` (glue-only hubs included) ([`ARCHIVE.md`](ARCHIVE.md)) |
+| **Glue hubs** | Learned via event-df / partner-degree | Not an alert type — high-fan-out platforms leave A′; hub-only leaves still archive |
+| **Mega-apex** | Same clocks (event-df in seconds) | Mixed and infra-only certs **archive**; `all_domains` keeps the infra SAN (possibly compacted) |
+| **Research archive** | `archive/matches.jsonl` | Every watchlist hit + `all_domains` ([`ARCHIVE.md`](ARCHIVE.md)) |
 
-Family-looking pairs (Optum×UHC) and scarce vendor-looking pairs (Gilead×Honeywell) **both land in the same `alerts.jsonl`** today. Glue hubs (dealer.com, files.com, Automattic, …) do **not** — they are stripped so A′ is not flooded with commodity SaaS co-tenants. That strip is for **diligence SNR**, not a claim that platform edges are worthless.
+Family-looking pairs (Optum×UHC) and scarce vendor-looking pairs (Gilead×Honeywell) **both land in the same `alerts.jsonl`** today. High-df platforms (dealer.com, files.com, Automattic, …) usually do **not** — event-df / packing degree strip them so A′ is not flooded with commodity SaaS co-tenants. That strip is for **diligence SNR**, not a claim that platform edges are worthless.
 
-**Interestingness ≈ improbability, by use-case:** A′ values rare coalitions; platform penetration values hub×customer counts over time (recoverable from archive — see [`ARCHIVE.md`](ARCHIVE.md#platform-hubs-after-glue-strip-penetration-research)); mega-apex suppress is near-zero information either way.
+**Interestingness ≈ improbability, by use-case:** A′ values rare coalitions; platform penetration values hub×customer counts over time (recoverable from archive — see [`ARCHIVE.md`](ARCHIVE.md#platform-hubs-after-glue-strip-penetration-research)). Amazon in a SAN is “Acme uses AWS,” not a deal.
 
-**Hoard vs screen:** keep the research archive (lossy past `ARCHIVE_MAX_TOTAL_BYTES`, default 50 GiB — off-box copy if you need older history). Screen A′ aggressively with glue. That asymmetry preserves technographic edges for a later feature without flooding the diligence product.
+**Hoard vs screen:** keep the research archive (lossy past `ARCHIVE_MAX_TOTAL_BYTES`, default 50 GiB **of the archive directory** — not host `df`; off-box copy if you need older history). Screen A′ with listen-first + live event-df / partner-degree. That asymmetry preserves technographic edges without flooding the diligence product.
 
 ### Alt-data positioning (what this is / is not)
 
@@ -71,12 +73,12 @@ Shoestring differentiation that still fits: **time-stamped multi-brand / hub×cu
 **Chosen handling (posterior, not first-fire):**
 
 1. **Emit unlabeled A′** — novel multi-brand co-occurrence.
-2. **Promote platforms later** — `mine_glue` / `mine_hub_customers` on the archive → human review → add hub to [`glue.txt`](../glue.txt) → future A′ quiets. Early false A′ lines for that hub are accepted cold-start debt. **Ingest already captured hub-only leaves** (glue is not an inspect drop).
+2. **Promote platforms later** — `mine_glue` / `mine_hub_customers` on the archive → human review. Early false A′ lines for a new hub are accepted cold-start debt. **Ingest already captured every watchlist hit.** Live event-df / partner-degree catch up without a shipped list.
 3. **Confirm family later** — ownership overlay (deferred); not inventable from CT alone on day one.
-4. **Scarce vendor** — what stays rare after glue promotions and without an ownership link (Gilead×Honeywell class). A separate V′ stream is deferred until labels exist.
+4. **Scarce vendor** — what stays rare after platform promotions and without an ownership link (Gilead×Honeywell class). A separate V′ stream is deferred until labels exist.
 5. **Do not auto-glue** on the first weird cross-sector pair.
 
-[`glue.txt`](../glue.txt) means “hubs we refuse to treat as A′ equity,” not “meaningless.” Dealer.com / WordPress / Files.com edges remain useful for **platform penetration** research via the archive.
+Dealer.com / WordPress / Files.com edges remain useful for **platform penetration** research via the archive.
 
 ## What the edge achieved (pre-novelty tip eval)
 
@@ -85,37 +87,60 @@ Numbers below are from the **raw 15m MatchEvent dump** before in-process novelty
 | Layer | Result | Intent met? |
 |---|---|---|
 | Firehose → watchlist match | Works at scale (~47k brands hit in 15m) | Yes |
-| Mega-apex suppress | See [live Oracle ratio](#live-oracle-funnel-inspect-drop-stays) — do **not** treat “~3.2M emits” as measured volume ([`SCALE.md`](SCALE.md) 3.2M is inspect/s at a 10k list) | Partial (still needed) |
+| Mega-apex / packing hubs | See [live Oracle funnel](#live-oracle-funnel-listen-first-no-lists) — A′ stays quiet after df warm; archive keeps infra | Yes (A′ screen, not capture drop) |
 | Human-ready diligence trickle | Raw emit still too hot | No (solved later by A′) |
 | Early-warning / novelty store | **Now in-scope** via `EGRESS=novelty` → `novelty.db` + `alerts.jsonl` | Yes (product path) |
 
-**Volume (raw dump):** ~268k emits / 15m ≈ **1.07M/hr** *after* suppress already applied at capture. Top 20 brands ≈22% of events. Roughly half of events come from brands with ≥100 hits in the window (routine infra churn).
+**Volume (raw dump):** ~268k emits / 15m ≈ **1.07M/hr** *after* the then-current inspect suppress. Top 20 brands ≈22% of events. Roughly half of events come from brands with ≥100 hits in the window (routine infra churn). Do **not** treat SCALE.md “~3.2M” as measured emit volume (that figure is inspect/s at a 10k list).
 
-### Live Oracle funnel (inspect-drop stays)
+### Live Oracle funnel (dump-era inspect-drop — historical)
 
-Process-lifetime `/status` on the Always Free box (2026-08-23, **~37 min** uptime — ratio is this process only; `frames_per_sec` ≈ 2540 may include catch-up):
+Historical `/status` **before** inspect-drop was removed (Always Free, 2026-08-23, **~37 min** — this process only):
 
 | Counter | Value |
 |---|---|
 | `frames_seen` | 5,573,622 |
 | `matches_enqueued` (= `archive_events_written`) | 51,715 |
-| `matches_suppressed` (mega-apex-only, never archived) | 140,223 |
+| `matches_suppressed` (then: every implicated name in suppress.txt — never archived) | 140,223 |
 | Watchlist hits that were fully suppressed | **73%** (140,223 / 191,938) |
 | `novelty_fully_ignored` (glue∪suppress after enqueue) | 1,145 |
 | `novelty_alerts_a` | 3 (~5/hr this slice) |
 | `archive_dir_bytes` | ~1.08 GiB (dir includes prior chunks; this process wrote ~26 MiB) |
 
-**Gate:** keep mega-apex **inspect-drop**. Three quarters of watchlist hits never enqueue; putting them in the 50 GiB rolling archive would mostly evict useful glue/customer rows. A′ would still ignore `suppress.txt` even if inspect-drop went away — otherwise `{amazonaws.com, acme.com}` would flood as two-brand coalitions. Revisit A′-only suppress only if this ratio collapses or you explicitly want Shopify-class hub-only rows in the archive.
+A 12-minute `count_suppress` sidecar (filter left running) saw 70% of watchlist hits fully suppressed: **80% infra-only** (amazonaws.com 27.6k, azure.com 5.6k) vs **20% SaaS-only** (zendesk.com 7.0k, mybluehost.me 0.9k, salesforce.com 0.2k). Dump-era glue/suppress files then listed those names. Remaining inspect-drop was infra-only.
+
+**Capture-first (after inspect-drop removed):** production inspect is `DomainWatchlist::new` — those infra-only leaves **archive**. `matches_suppressed` stays 0. Full watchlist archive is ~3× the old enqueue; rolling 50 GiB prune stays on.
+
+Eval the old drop histogram with an **operator-provided** classifier (not shipped):
+
+```bash
+CERTSTREAM_URL=ws://127.0.0.1:8080/ cargo run --release --example count_suppress -- \
+  /var/lib/ct-firehose-filter/domains.txt 720 /path/to/optional-classifier.txt
+```
+
+### Live Oracle funnel (listen-first, no lists)
+
+Cold start with a fresh `novelty.db`, **no** name lists, `NOVELTY_CALIBRATE_SECS=21600`. After unmute (~6.75h):
+
+| Check | Result |
+|---|---|
+| `novelty_calibrating` | `false` |
+| Calibrate-muted coalitions | 165 (not replayed) |
+| A′ alerts | **15** (~2.2/hr) |
+| Amazon / Zendesk / Azure coalitions | **0** |
+| `novelty_high_df_dropped` | 495 |
+| amazonaws `events` | ~1.09M with **1** live partner (not a floor of 25) |
+
+Mega-apex is event-df (seconds). Packing hubs are partner-degree. Unlabeled new SaaS can still look like A′ after unmute — accepted; mine the archive later.
 
 **Verdict on the filter:** engineering goal met (needle-shaped *relative to* CT). Raw emit alone is not human-ready; **warm A′** is the product trickle (~tens/hour).
 
 ## Noise vs signal
 
 ```text
-CT firehose --> exact eTLD+1 + suppress --> raw emit (~1M/hr)
-                                              |
-                         mostly (~95%+) -----> routine renewals / SaaS churn
-                         thin gold ----------> scarce hosts / multi-brand / rare SSO-VPN
+CT firehose --> exact eTLD+1 --> archive every hit
+                    |
+                    +--> A′ (6h calibrate, then event-df / partner-degree) --> quiet diligence trickle
 ```
 
 ### Mostly noise
@@ -136,8 +161,9 @@ Strongest pattern: **one cert naming multiple watchlist brands** that share a co
 - `deere.com` + `harvestprofit.com`
 - `adeccogroup.com` + `akka-technologies.com`
 
-After stripping SaaS glue brands (see [`glue.txt`](../glue.txt)): **1,874** `rank_signal` Tier A
-events and **1,122** unique brand coalitions in the ranked 15m dump.
+After stripping dump-era SaaS glue brands from that 15m dump: **1,874** `rank_signal` Tier A
+events and **1,122** unique brand coalitions. (Those classifier files are historical; the
+product uses live event-df / partner-degree.)
 
 Much of that is **confirmation of known ownership / ongoing ops**, not pre-announcement surprise. True early warning needs **novelty** (first-seen host or brand-pair). The raw tip dump had no durable store; **prod now keeps first-seen coalition keys in `novelty.db`** (`EGRESS=novelty`).
 
@@ -161,39 +187,35 @@ Gold is not in reading 268k lines. Rank downstream:
 
 ## SNR levers (without destroying signal)
 
-**Do not** suppress high-volume *brands* off the shared watchlist. Cut noise with glue strip, dedupe, and ranking.
+**Do not** suppress high-volume *brands* off the shared watchlist. Cut noise with event-df / packing degree, size caps, dedupe, and ranking.
 
-**Strip lists (different jobs):**
-- [`suppress.txt`](../suppress.txt) — **mega-apex / infra volume** — the only inspect/archive drop list
-- [`glue.txt`](../glue.txt) — **high-fan-out platform glue** — A′ ignore only (ESP/WAF/DAM/CRS/MFT/deals/CMS/HR/ITSM/vertical website & estimate SaaS — not scarce vendor–customer pairs)
-
-`load_suppress_and_glue` is for **A′ ignore** (NoveltySink). Do **not** pass it to watchlist inspect or hub-only certs never archive. Keep two files so glue mining/churn does not muddy the stable mega-apex list. Keep corporate families out of either file.
+Prod cold start is `NOVELTY_CALIBRATE_SECS=21600` + live event-df. Production inspect is `DomainWatchlist::new`. Dump-era eval used filled glue/suppress files as classifiers; this repo does not ship them.
 
 | Lever | Mechanism | On the 15m dump |
 |---|---|---|
-| Mega-apex [`suppress.txt`](../suppress.txt) | Edge strip (infra volume) | Already applied at capture |
-| Glue [`glue.txt`](../glue.txt) | A′ ignore (`GLUE_FILE`); not an inspect drop | See `glue.txt` (human-reviewed; count drifts) |
+| Mega-apex | Live event-df (`NOVELTY_MAX_BRAND_DF`) | Dump-era eval used a filled suppress list |
+| Packing hubs | Live partner-degree (`NOVELTY_MAX_PARTNER_DEGREE`) | Dump-era eval used a filled glue list |
 | In-window dedupe | Sorted `matched_domains` (+ real fingerprint) | 267,680 → 225,473 (−16%) |
 | `rank_signal` Tier A coalitions | ≥2 non-glue `matched_keywords` | **1,874** events, **1,122** unique pairs |
 | `rank_signal` Tier B first host | First `(brand, host)` in file order | 194,957 (cold-start dump ≈ almost every host once) |
-| `rank_signal` Tier C rest | Renewals / empty after glue | 28,642 |
+| `rank_signal` Tier C rest | Renewals / remainder | 28,642 |
 
 **Naming:** offline `rank_signal` Tier A/B/C ≠ novelty product **A′ / B′**. Product defaults to A′ only.
 
 Offline tools (pass your own MatchEvent JSONL):
 
 ```bash
-# SNR tiers
+# SNR tiers (optional classifier as 2nd arg)
 cargo run --release --example rank_signal -- \
-  /tmp/ct-ma-eval.jsonl glue.txt 25
+  /tmp/ct-ma-eval.jsonl
 
 # Glue suspects (high partner fan-out) — human review only, never auto-merge
 cargo run --release --example mine_glue -- \
-  /tmp/ct-ma-eval.jsonl suppress.txt 40
+  /tmp/ct-ma-eval.jsonl
 
 # Archive: hub×customer + unknown high-fan-out apexes (PSL eTLD+1)
 cargo run --release --example mine_hub_customers -- \
-  /var/lib/ct-firehose-filter/archive glue.txt suppress.txt 40
+  /var/lib/ct-firehose-filter/archive
 
 # Archive: admin/grafana/argocd hostnames (ASM extract — not A′)
 cargo run --release --example mine_admin -- \
@@ -211,13 +233,13 @@ Avoid: volume-based brand suppress, `vpn`/`sso`/`merge` hard filters, fuzzy SLD 
 
 **Offline proof:** [`examples/novelty_replay.rs`](../examples/novelty_replay.rs) over MatchEvent JSONL (same processing via [`novelty_alert`](../src/novelty_alert.rs)).
 
-Loads [`suppress.txt`](../suppress.txt) + [`glue.txt`](../glue.txt) so mega-apex/glue brands do not inflate rankings.
+Dump-era replay numbers below used filled glue/suppress classifiers. Product replay uses live event-df / partner-degree (optional `SUPPRESS_FILE` / `GLUE_FILE` only if the operator provides a path).
 
 | Alert | Key | 15m dump (cold DB) |
 |---|---|---|
 | **A′ (default)** | First insert of sorted multi-brand coalition, **size ≤5** (`NOVELTY_MAX_COALITION`) | **887** emitted; **230** oversized dropped (DB still records them) |
 | B′ (opt-in `NOVELTY_TIERS=A,B`) | First `(brand, host)`, skipping routine left-labels | Still ~150k events — tip churn, not renewals |
-| Fully ignored | All keywords on suppress/glue | 20,563 |
+| Fully ignored | Dump-era: all keywords on then-filled suppress/glue | 20,563 |
 
 ```bash
 # Offline replay (same A′ logic as EGRESS=novelty)
@@ -240,7 +262,7 @@ Tagged enum envelope — A′ and B′ do not share null placeholders.
 | `brand` / `host` / `novel_hosts` | Present on **B′ only** (opt-in `NOVELTY_TIERS`) |
 | `event` | Nested `MatchEvent` (`matched_domains`, `matched_keywords`, `seen`, `source`, `fingerprint`, `san_count`) |
 
-Absent keys mean “not this tier,” not null. Join alert → archive / crt.sh via `event.fingerprint` (soft join; no separate `event_id`). Alerts stay thin — full SAN lists live in `archive/matches.jsonl`.
+Absent keys mean “not this tier,” not null. Join alert → archive / crt.sh via `event.fingerprint` (soft join; no separate `event_id`). Alerts stay thin — SAN lists live in `archive/matches.jsonl` (compacted at 32 names by default).
 
 **Retention:** A′ **payloads** in `alerts.jsonl` rotate at 256 MiB and prune when live+archives exceed **20 GiB** — you can lose old alert lines while `novelty.db` still remembers the coalition key. Back up JSONL if you need a durable alert history for customers or case studies.
 
@@ -262,6 +284,10 @@ With `EGRESS=novelty`, A′ runs **in-process** in the filter. The product trick
 | Tiers | `NOVELTY_TIERS=A` (default; human-scale). B′ opt-in only |
 | Max coalition | `NOVELTY_MAX_COALITION=5` (drop size ≥6 shared-vendor junk) |
 | Max SANs | `NOVELTY_MAX_SANS=32` (drop Firebase-style mega-SAN packing; `0` disables) |
+| Partner degree | `NOVELTY_MAX_PARTNER_DEGREE=25` (learned packing hub) |
+| Event df | `NOVELTY_MAX_BRAND_DF=25` (solo+multi appearances; this is the Amazon clock) |
+| Burn-in | `NOVELTY_CALIBRATE_SECS` / `NOVELTY_CALIBRATE_EVENTS` (prod compose default **21600**; `0` = off). Mute `alerts.jsonl` only while event-df fills |
+| Learning feed | `NOVELTY_CANDIDATES` (optional JSONL of first-seen coalitions + degrees) |
 | Backup | Local file copy or `sqlite3 … '.backup …'` |
 | Restore | Copy backup over `NOVELTY_DB` **before** starting with `REQUIRE_DB=1` |
 | Alerts rotation | `NOVELTY_ALERTS_MAX_BYTES` (256 MiB chunks) + `NOVELTY_ALERTS_MAX_TOTAL_BYTES` (20 GiB) + gzip |
@@ -294,7 +320,14 @@ sqlite3 /var/lib/ct-firehose-filter/novelty.db ".backup '/var/backups/novelty.db
 
 ## Product implication
 
-Suppress only mega-apexes ([`suppress.txt`](../suppress.txt)) and SaaS glue ([`glue.txt`](../glue.txt)). Do not suppress busy public companies off the shared watchlist.
+Prod cold start is `NOVELTY_CALIBRATE_SECS=21600` so a fresh `novelty.db` does not page AWS×customer. After unmute, confirm `/status` `novelty_high_df_dropped` on hub×customer and `brand_degree.events` ≫ 25 for amazonaws while `partners` may still be ~0. This repo ships **no** name lists.
+
+Measure the lag with a read-only archive scan (filter stays up):
+
+```bash
+cargo run --release --example measure_burnin -- \
+  /var/lib/ct-firehose-filter/archive
+```
 
 **Gold extraction** = durable `EGRESS=novelty` on the Oracle VM (SQLite on disk + size-capped A′ → `alerts.jsonl`). Raw MatchEvent dumps alone are not the product feed.
 
@@ -307,7 +340,7 @@ cargo run --release --example audit_aprime -- \
   /tmp/ct-novelty-glue-alerts.jsonl /tmp/aprime-label-sample.jsonl
 
 cargo run --release --example audit_screened_out -- \
-  /tmp/ct-ma-eval.jsonl suppress.txt glue.txt /tmp/screened-out-sample.jsonl
+  /tmp/ct-ma-eval.jsonl
 ```
 
 ### Screened-in A′ (pre size-cap, 1,117 alerts)
@@ -330,7 +363,7 @@ Stratified label sample (100 rows) written to `/tmp/aprime-label-sample.jsonl` f
 
 | Kind | Finding |
 |---|---|
-| Fully ignored (suppress+glue) | ~20.5k events; multi-brand fully-ignored samples are rare (correct: all implicated names were suppress/glue) |
+| Fully ignored (dump-era classifiers) | ~20.5k events; multi-brand fully-ignored samples are rare (correct: all implicated names were on those lists) |
 | High-churn singles | Top noisy brands remain as singles — routine infra, **correct to keep out of A′** |
 | Scarce-brand B′ | Deliberately not in default product; real SSO/VPN gold may live here → **v2 rate-limited channel**, not dump-all-B′ |
 
@@ -338,9 +371,9 @@ Stratified label sample (100 rows) written to `/tmp/aprime-label-sample.jsonl` f
 
 ## Why this signal matters (PE / corp-dev diligence)
 
-Certificate Transparency is a public log of names orgs put on TLS certs. When two portfolio-relevant brands appear on the same cert after glue stripping, that co-occurrence often reflects:
+Certificate Transparency is a public log of names orgs put on TLS certs. When two portfolio-relevant brands appear on the same cert after high-df / packing-hub strip, that co-occurrence often reflects:
 
-- shared vendors / marketing clouds (noise — strip with [`glue.txt`](../glue.txt))
+- shared vendors / marketing clouds (noise — event-df / partner-degree strip these)
 - known subsidiaries and ongoing ops (confirmation, not surprise)
 - occasional **latent** integration scaffolding worth a graph look
 
@@ -363,7 +396,7 @@ Certificate Transparency is a public log of names orgs put on TLS certs. When tw
 Do **not** equate “~2k A′ lines” with commercial alpha. Multi-year full-CT backfill on Always Free is a **non-goal** (CT is multi-TB; no free bulk dump). Validate cheaply:
 
 1. **Stratified sample (habit):** ~20 A′ rows/week; tag each `family | platform | scarce_vendor | junk` (use [`audit_aprime`](../examples/audit_aprime.rs) if helpful). Without labels you cannot tell if the trickle is useful.
-2. **Glue loop:** promote clear high-fan-out hubs into [`glue.txt`](../glue.txt) after review (`mine_glue`, `mine_hub_customers`); accept early false A′ as cold-start debt. Capture continues for hub-only leaves.
+2. **Platform loop:** mine clear high-fan-out hubs after review (`mine_glue`, `mine_hub_customers`); accept early false A′ as cold-start debt. Capture continues for hub-only leaves. Live df/degree catch up without a shipped list.
 3. **Case studies:** for the best `family` tags, check ownership/news — did co-naming precede a known subsidiary link or announced deal, or only confirm known ownership?
 4. **Optional crt.sh spot-check:** for a *handful* of known historical deals, query whether multi-brand certs appeared before news — not a 752k-brand warehouse replay.
 5. **Keep the live archive** — that is the shoestring “backfill going forward”; sealed gz older than `ARCHIVE_MAX_TOTAL_BYTES` (50 GiB) are pruned ([`ARCHIVE.md`](ARCHIVE.md)).
@@ -373,11 +406,12 @@ Only after (1)+(3) look promising should you invest in an ownership surprise fil
 ## Reproduce the eval dump
 
 ```bash
+DUMP_JSONL=/tmp/ct-ma-eval.jsonl \
 CERTSTREAM_URL=ws://127.0.0.1:8080/ RUST_LOG=warn \
   cargo run --release --example live_smoke -- \
-  /path/to/domains.txt 900 suppress.txt /tmp/ct-ma-eval.jsonl
+  /path/to/domains.txt 900
 ```
 
-`GLUE_FILE` defaults to `glue.txt` (A′ ignore only; inspect uses `suppress.txt` alone).
+Production inspect is capture-all (`DomainWatchlist::new`). Pass an optional classifier to `live_smoke` only when reproducing dump-era inspect-drop.
 
 See also [`SCALE.md`](SCALE.md) (752k RAM/throughput gate), [`DEPLOY.md`](DEPLOY.md) (go-live vs decision-grade), [`CERTSTREAM.md`](CERTSTREAM.md) (ops), and the matching rules in the root README.

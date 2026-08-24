@@ -10,32 +10,42 @@ is best-effort only. **Product go-live** = `EGRESS=novelty` (in-process A′ →
 ([`docs/DEPLOY.md`](docs/DEPLOY.md)). Scale: [`docs/SCALE.md`](docs/SCALE.md). Ops:
 [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md). Signal quality: [`docs/SIGNAL.md`](docs/SIGNAL.md).
 
-Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). Two lists, **two jobs** (do not merge them at inspect):
+Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). **Capture everything the watchlist hits.** Two products, one ingest:
 
-- [`suppress.txt`](suppress.txt) — **mega-apex / infra volume** — the only ingest drop list (Amazon, Google, … may stay on `domains.txt` but never enqueue)
-- [`glue.txt`](glue.txt) — **platform / co-tenant glue** — A′ screen only (ESP/WAF/DAM/CRS/WP). Hub-only leaves still archive so customers can be mined later.
+```text
+watchlist match
+    ├─→ archive/matches.jsonl     EVERY hit (Amazon, Zendesk, Acme, …)
+    └─→ A′ alerts.jsonl           first-seen scarce×scarce after 6h listen
+                                  (high event-df / packing-hub degree stripped)
 
-Do not put corporate families in either file.
+offline: mine_hub_customers on the archive
+    └─→ "Acme uses Zendesk / AWS / Salesforce"   (T′ / technographics)
+```
 
-Raw emit after suppress is still mostly routine cert churn. In-process A′ novelty turns multi-brand first-seens into a reviewable trickle on disk; single-brand matches are discarded from the **product** path (they still land in the research archive when enabled).
+- **A′** = improbable co-occurrence of two *portfolio* brands (diligence trickle).
+- **T′** = portfolio brand co-named with a *platform* (install-base). Mine the archive; do not live-alert every AWS cert.
+
+Cold start is `NOVELTY_CALIBRATE_SECS` (prod default **6h**) plus live event-df / partner-degree. The mute keeps `alerts.jsonl` quiet while solo watchlist hits fill event-df; Amazon saturates in seconds. After unmute, AWS×customer is T′ (`NOVELTY_MAX_BRAND_DF`), not a deal. Unlabeled new SaaS can still look like A′ until live df/degree catches up — mine the archive later. This repo ships **no** name lists.
+
+Raw emit is still mostly routine cert churn. In-process A′ novelty turns first-seen multi-brand coalitions (after event-df / degree strip) into a reviewable trickle; single-brand matches still land in the research archive.
 
 ### Three streams (do not confuse A′ / B′ with the archive)
 
 ```text
 watchlist match (enqueue)
-    ├─→ archive/matches.jsonl     research: every enqueue + full SAN list (not B′)
+    ├─→ archive/matches.jsonl     research: every watchlist hit (SAN list may be compacted)
     └─→ novelty (EGRESS=novelty)
-          ├─ A′  ≥2 brands, first-seen coalition → alerts.jsonl + novelty.db
+          ├─ A′  ≥2 low-df brands, first-seen, after burn-in → alerts.jsonl + novelty.db
           └─ B′  first (brand, host) — OFF in prod (NOVELTY_TIERS=A)
 ```
 
 | Stream | What it is | On disk (prod) |
 |---|---|---|
-| **Research archive** | All enqueued matches (single- and multi-brand) | `archive/matches.jsonl` — rotate+gzip; prune oldest sealed chunks at `ARCHIVE_MAX_TOTAL_BYTES` (default 50 GiB) |
-| **A′** | First-seen multi-brand coalition (high-SNR diligence) | `alerts.jsonl` (20 GiB prune) + coalition keys in `novelty.db` (kept) |
+| **Research archive (T′ feed)** | All **enqueued** matches — every watchlist hit | `archive/matches.jsonl` — rotate+gzip; prune oldest **sealed** chunks when the **archive directory** exceeds `ARCHIVE_MAX_TOTAL_BYTES` (default 50 GiB). That is not `df /`. `all_domains` compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32) |
+| **A′** | First-seen low-df×low-df coalition after listen-first event-df + partner-degree | `alerts.jsonl` (20 GiB prune) + coalition keys in `novelty.db` (kept) |
 | **B′** | First-seen host under a brand (noisy tip churn) | **Not written** unless you opt in `NOVELTY_TIERS=A,B` |
 
-**A′ is a subset of the archive, not a second event log to union.** Every A′ line came from an enqueue that also archived; glue-only and single-brand matches archive without alerting. Mega-apex-only watchlist hits (`fully_suppressed`) never enqueue — they are in neither file. Join A′ → archive on `event.fingerprint` for full SANs.
+**A′ is a subset of the archive, not a second event log to union.** Every A′ line came from an enqueue that also archived; infra-only, hub-only, and single-brand matches archive without alerting. Join A′ → archive on `event.fingerprint` for SANs (`all_domains` may be a 32-name sample; `san_count` is still raw).
 
 Details: [`docs/SIGNAL.md`](docs/SIGNAL.md) (A′/B′), [`docs/ARCHIVE.md`](docs/ARCHIVE.md) (research archive).
 
@@ -43,7 +53,7 @@ This repo is **not** a full entity-resolution product (no SEC CIK/LEI mapping, n
 
 ## Matching rule
 
-**Exact eTLD+1 / host-suffix containment**, then **suppress strip**.
+**Exact eTLD+1 / host-suffix containment.** Inspect does **not** drop names.
 
 Brand-in-label and hyphen-token fuzzy matching are out of scope (they false-positive heavily on large lists: `eu-central-1` → `central.com`, `fabric.microsoft…` → `fabric.com`).
 
@@ -51,20 +61,19 @@ For each certificate SAN:
 
 1. Strip `*.`, lowercase.
 2. Walk every DNS **suffix** of the host against the watchlist HashSet (`s3.amazonaws.com` → check `s3.amazonaws.com`, then `amazonaws.com`, …).
-3. Drop implicated names that appear in `SUPPRESS_FILE` (default [`suppress.txt`](suppress.txt)) — mega-apex infra only.
-4. **Enqueue + archive if a non-suppressed watchlist name remains** (including glue-only hubs). Recompute `matched_domains` to SANs that still hit those names. Missing suppress file ⇒ empty suppress set.
-5. **A′ only:** strip `GLUE_FILE` ∪ `SUPPRESS_FILE` so high-fan-out platforms do not become diligence coalitions. Missing glue file ⇒ no extra A′ strip.
+3. **Enqueue + archive** if any watchlist name remains. `matched_keywords` keeps every implicated eTLD+1 (including Amazon / Zendesk).
+4. **A′ only:** mute `alerts.jsonl` for `NOVELTY_CALIBRATE_SECS` (prod **21600**) while df fills. Then drop brands at or above `NOVELTY_MAX_BRAND_DF` (event count, default 25) **or** `NOVELTY_MAX_PARTNER_DEGREE` (distinct co-named partners, default 25). High-df×customer stays in the archive (T′). `NOVELTY_CANDIDATES` is the optional learning feed.
 
-Watchlist file entries are normalized with the Public Suffix List when loaded (so `www.google.com` on the list becomes `google.com`). Suppress does **not** edit the shared `domains.txt`.
+Watchlist file entries are normalized with the Public Suffix List when loaded (so `www.google.com` on the list becomes `google.com`).
 
-| SANs | Watchlist hit | With default suppress | Decision |
+| SANs | Watchlist hit | Archive | A′ |
 |---|---|---|---|
-| `sso.fitbit.com` | fitbit.com | fitbit.com | emit |
-| `s3.amazonaws.com` | amazonaws.com | (stripped) | drop |
-| `s3.amazonaws.com` + `api.acme.com` | amazonaws + acme | acme.com only | emit acme SAN |
-| `google-sso.target.com` | target.com | target.com | emit |
-| `*.eu-central-1.amazonaws.com` | amazonaws.com | (stripped) | drop |
-| `google.com.evil.example` | — | — | no hit |
+| `sso.fitbit.com` | fitbit.com | yes | no (single brand) |
+| `s3.amazonaws.com` | amazonaws.com | yes | no (solo / high event-df after burn-in) |
+| `s3.amazonaws.com` + `api.acme.com` | amazonaws + acme | yes (both names) | no after df warm (Amazon high-df); muted during 6h calibrate |
+| `google-sso.target.com` | target.com | yes | no (single brand) |
+| `*.eu-central-1.amazonaws.com` | amazonaws.com | yes | no (solo / high event-df) |
+| `google.com.evil.example` | — | no | — |
 
 ## Delivery semantics
 
@@ -162,22 +171,22 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `src/novelty_sink.rs` | in-process A′ egress (`EGRESS=novelty`) |
 | `src/status.rs` | `/healthz` + `/status` JSON (loopback scrape) |
 | `src/alerts_file.rs` | chunk rotate + total byte budget + gzip |
-| `glue.txt` | SaaS/marketing glue apexes (**A′ strip only** — not an inspect drop) |
-| `suppress.txt` | default CT mega-apex suppress (this filter only) |
 | `Dockerfile` | multi-stage filter image |
 | `docker-compose.yml` | init + CertStream + filter (`EGRESS=stdout`) |
 | `docker-compose.prod.yml` | novelty overlay (Oracle) |
 | `.env.prod.example` | prod compose env template |
 | `deploy/` | cloud-init, systemd, preflight scripts |
 | `examples/audit_aprime.rs` | A′ precision buckets + label sample |
-| `examples/audit_screened_out.rs` | suppress/glue / high-churn sample audit |
+| `examples/audit_screened_out.rs` | optional-classifier / high-churn sample audit |
 | `examples/watchlist_scale_bench.rs` | local 1k→752k RSS / ns/op bench |
+| `examples/count_suppress.rs` | eval histogram of `new_with_suppress` drops (not production inspect) |
 | `examples/mine_glue.rs` | dump-driven glue candidate ranking |
 | `examples/mine_hub_customers.rs` | archive hub×customer + unknown high-fan-out apexes |
+| `examples/measure_burnin.rs` | read-only archive: event-df vs partner-degree vs would-be A′ (filter stays up) |
 | `examples/mine_admin.rs` | archive admin/grafana/argocd/oktaadmin hostnames (ASM, not A′) |
 | `src/config.rs` | typed env config + fail-fast `validate()` |
 | `src/parse.rs` | partial deserialize of `data.leaf_cert.all_domains` |
-| `src/watchlist.rs` | PSL eTLD+1 HashSet + host-suffix match + suppress strip |
+| `src/watchlist.rs` | PSL eTLD+1 HashSet + host-suffix match |
 | `src/pipeline.rs` | bounded MPSC backpressure + metrics wiring |
 | `src/metrics.rs` | atomic counters + periodic progress logs |
 | `src/batch.rs` | flush at 10 messages, 256 KiB, or timer |

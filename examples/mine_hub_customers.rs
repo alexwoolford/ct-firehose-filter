@@ -1,14 +1,14 @@
 //! Mine hub×customer edges (and unknown high-fan-out apexes) from the research archive.
 //!
-//! Capture-first: glue names are a *classifier* for known platforms, not a prerequisite
-//! for ingest. Unknown hubs show up as high unrelated fan-out on `all_domains`.
+//! Capture-first: optional classifier files label known platforms for the
+//! "known hub" section. Unknown hubs still show as high unrelated fan-out.
 //!
 //! ```bash
 //! cargo run --release --example mine_hub_customers -- \
-//!   /var/lib/ct-firehose-filter/archive glue.txt suppress.txt 40
+//!   /var/lib/ct-firehose-filter/archive
 //! ```
 //!
-//! Args: `<archive_dir_or_jsonl> [glue_file] [suppress_file] [top_n]`
+//! Args: `<archive_dir_or_jsonl> [optional_glue_classifier] [optional_suppress_classifier] [top_n]`
 //! Env: `MIN_PARTNERS` (default 15).
 
 use std::collections::{HashMap, HashSet};
@@ -79,11 +79,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let archive = env::args()
         .nth(1)
         .unwrap_or_else(|| "/var/lib/ct-firehose-filter/archive".into());
-    let glue_path = env::args().nth(2).unwrap_or_else(|| "glue.txt".into());
-    let suppress_path = env::args().nth(3).unwrap_or_else(|| "suppress.txt".into());
+    let glue_path = env::args()
+        .nth(2)
+        .filter(|s| s.parse::<usize>().is_err())
+        .unwrap_or_default();
+    let suppress_path = env::args()
+        .nth(3)
+        .filter(|s| s.parse::<usize>().is_err())
+        .unwrap_or_default();
     let top_n: usize = env::args()
         .nth(4)
         .and_then(|s| s.parse().ok())
+        .or_else(|| env::args().nth(2).and_then(|s| s.parse().ok()))
         .unwrap_or(40);
     let min_partners: usize = env::var("MIN_PARTNERS")
         .ok()
@@ -192,8 +199,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("\n## Unknown high-fan-out apexes (not in glue.txt / suppress.txt)");
-    println!("# Promote to glue.txt after human review — ingest already captured them.");
+    println!("\n## Unknown high-fan-out apexes (not in the classifiers you passed)");
+    println!("# Review as platform suspects — ingest already captured them.");
     let mut unk: Vec<_> = partners
         .into_iter()
         .filter(|(a, p)| p.len() >= min_partners && !glue.contains(a) && !suppress.contains(a))

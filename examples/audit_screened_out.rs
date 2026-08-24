@@ -1,12 +1,14 @@
 //! Audit screened-out traffic: are we throwing gold away?
 //!
-//! Samples fully-ignored (suppress+glue) multi-brand events and high-churn
-//! single-brand events from a MatchEvent JSONL dump.
+//! Samples fully-ignored (optional classifier files) multi-brand events and
+//! high-churn single-brand events from a MatchEvent JSONL dump.
 //!
 //! ```bash
 //! cargo run --release --example audit_screened_out -- \
-//!   /tmp/ct-ma-eval.jsonl suppress.txt glue.txt /tmp/screened-out-sample.jsonl
+//!   /tmp/ct-ma-eval.jsonl
 //! ```
+//!
+//! Args: `<jsonl> [optional_suppress] [optional_glue] [out_jsonl]`
 
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -29,8 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let jsonl = env::args()
         .nth(1)
         .unwrap_or_else(|| "/tmp/ct-ma-eval.jsonl".into());
-    let suppress = env::args().nth(2).unwrap_or_else(|| "suppress.txt".into());
-    let glue = env::args().nth(3).unwrap_or_else(|| "glue.txt".into());
+    let suppress = env::args().nth(2).unwrap_or_default();
+    let glue = env::args().nth(3).unwrap_or_default();
     let out_path = env::args()
         .nth(4)
         .unwrap_or_else(|| "/tmp/screened-out-sample.jsonl".into());

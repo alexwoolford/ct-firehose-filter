@@ -59,8 +59,6 @@ services:
       CERTSTREAM_URL: ws://certstream:8080/
       EGRESS: stdout
       WATCHLIST_FILE: /data/watchlist.txt
-      SUPPRESS_FILE: /data/suppress.txt
-      GLUE_FILE: /data/glue.txt
       CHANNEL_CAPACITY: "4096"
       BATCH_MAX_MESSAGES: "10"
       FLUSH_INTERVAL_SECS: "5"
@@ -75,8 +73,6 @@ services:
     volumes:
       # Mount your domain list here (demo keywords.txt by default).
       - ${WATCHLIST_HOST_PATH:-./keywords.txt}:/data/watchlist.txt:ro
-      - ${SUPPRESS_HOST_PATH:-./suppress.txt}:/data/suppress.txt:ro
-      - ${GLUE_HOST_PATH:-./glue.txt}:/data/glue.txt:ro
 
 volumes:
   certstream-data:

@@ -323,7 +323,8 @@ fn full_domains_txt_loads_and_matches_google_uniformly() {
 
 #[test]
 fn glue_only_leaf_is_not_fully_suppressed_at_inspect() {
-    // glue.txt is an A′ screen, not an inspect drop. Hub-only certs must still enqueue.
+    // Dump-era inspect-drop is gone. Hub-only certs must still enqueue.
+    // `new_with_suppress` is eval/API only — production inspect uses `DomainWatchlist::new`.
     let w = wl_suppress(
         &["pagerduty.com", "acme.com", "amazonaws.com"],
         &["amazonaws.com"],

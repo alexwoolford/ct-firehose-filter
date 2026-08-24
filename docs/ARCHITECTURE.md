@@ -37,11 +37,11 @@ fixes first (`/domains-only`, larger channel) before a Go fork.
 
 ## Matching policy (this filter)
 
-The Rust edge matches **registrable-domain (eTLD+1) host-suffix containment**, then drops
-only names in `SUPPRESS_FILE` (default `suppress.txt`) **before enqueue/archive**.
-`GLUE_FILE` (default `glue.txt`) is an **A′ screen** — it does not drop archive rows.
-Suppress/glue are **this process’s noise control** — they do not edit the shared
-watchlist (`domains.txt`). Brand-in-label / hyphen phishing detection is out of scope.
+The Rust edge matches **registrable-domain (eTLD+1) host-suffix containment** and
+archives every watchlist hit. Prod cold start is `NOVELTY_CALIBRATE_SECS=21600`
+plus live event-df / partner-degree. Mega-apex saturates event-df in seconds;
+packing hubs raise partner-degree. Brand-in-label / hyphen phishing detection
+is out of scope.
 
 ## Non-goals for this crate
 

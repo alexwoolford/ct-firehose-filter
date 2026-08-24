@@ -93,6 +93,9 @@ pub struct StatusResponse {
     pub novelty_mega_san_dropped: u64,
     pub novelty_fully_ignored: u64,
     pub novelty_coalitions_inserted: u64,
+    pub novelty_high_df_dropped: u64,
+    pub novelty_calibrate_muted: u64,
+    pub novelty_calibrating: bool,
     /// Process-lifetime A′ emit rate (warm tip is typically tens/hour).
     pub novelty_alerts_per_hour: f64,
     pub alerts_file_bytes: Option<u64>,
@@ -149,6 +152,12 @@ fn product_hint(snap: &MetricsSnapshot, uptime_secs: f64, egress: &str) -> Produ
             detail: "stdout egress — not the product novelty trickle",
         };
     }
+    if snap.novelty_calibrating > 0 {
+        return ProductHint {
+            ok: true,
+            detail: "calibrating — A′ muted; archive + novelty.db still listen",
+        };
+    }
     if uptime_secs > 3600.0
         && snap.matches_enqueued > 1_000
         && snap.novelty_alerts_a == 0
@@ -156,7 +165,8 @@ fn product_hint(snap: &MetricsSnapshot, uptime_secs: f64, egress: &str) -> Produ
     {
         return ProductHint {
             ok: false,
-            detail: "no A′ inserts after 1h with matches — check novelty DB / watchlist / glue",
+            detail:
+                "no A′ inserts after 1h with matches — check novelty DB / watchlist / calibrate",
         };
     }
     ProductHint {
@@ -257,6 +267,9 @@ fn build_status(state: &StatusState) -> StatusResponse {
         novelty_mega_san_dropped: snap.novelty_mega_san_dropped,
         novelty_fully_ignored: snap.novelty_fully_ignored,
         novelty_coalitions_inserted: snap.novelty_coalitions_inserted,
+        novelty_high_df_dropped: snap.novelty_high_df_dropped,
+        novelty_calibrate_muted: snap.novelty_calibrate_muted,
+        novelty_calibrating: snap.novelty_calibrating > 0,
         novelty_alerts_per_hour,
         alerts_file_bytes,
         alerts_file_lines,

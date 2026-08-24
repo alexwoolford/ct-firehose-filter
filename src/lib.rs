@@ -49,8 +49,8 @@ pub use ingress::{
 pub use metrics::{MetricsSnapshot, PipelineMetrics};
 pub use novelty::NoveltyStore;
 pub use novelty_alert::{
-    dedupe_key, effective_san_count, filter_brands, process_match, NoveltyAlert, NoveltyKind,
-    NoveltyPolicy, ProcessStats, EMPTY_SHA1_FP,
+    a_prime_brands, dedupe_key, effective_san_count, filter_brands, process_match, unique_keywords,
+    NoveltyAlert, NoveltyCandidate, NoveltyKind, NoveltyPolicy, ProcessStats, EMPTY_SHA1_FP,
 };
 pub use novelty_sink::{default_novelty_alerts, default_novelty_db, NoveltySink};
 pub use parse::{parse_certstream_frame, LeafDomains};

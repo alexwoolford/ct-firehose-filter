@@ -2,15 +2,17 @@
 //!
 //! Glue = watchlist eTLD+1 that co-occurs with many unrelated customer brands on the
 //! same cert (ESP/WAF/DAM-shaped). Candidates are printed for human review — never
-//! auto-merged into glue.txt.
+//! auto-merged into a product list. Pass an optional classifier to exclude names
+//! you already treat as platforms.
 //!
 //! ```bash
 //! cargo run --release --example mine_glue -- \
-//!   /tmp/ct-ma-eval.jsonl suppress.txt 40
+//!   /tmp/ct-ma-eval.jsonl
 //! ```
 //!
-//! Args: `<jsonl> [suppress_file] [top_n]`
-//! Env: `SUPPRESS_FILE`, `MIN_PARTNERS` (default 25), `MIN_EVENTS` (default 20).
+//! Args: `<jsonl> [optional_classifier] [top_n]`
+//! Env: `SUPPRESS_FILE` (optional classifier), `MIN_PARTNERS` (default 25),
+//! `MIN_EVENTS` (default 20).
 
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -26,14 +28,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let suppress_path = env::var("SUPPRESS_FILE")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| {
-            env::args()
-                .nth(2)
-                .unwrap_or_else(|| "suppress.txt".to_string())
-        });
+        .or_else(|| env::args().nth(2).filter(|s| s.parse::<usize>().is_err()))
+        .unwrap_or_default();
     let top_n: usize = env::args()
         .nth(3)
         .and_then(|s| s.parse().ok())
+        .or_else(|| env::args().nth(2).and_then(|s| s.parse().ok()))
         .unwrap_or(40);
     let min_partners: usize = env::var("MIN_PARTNERS")
         .ok()
@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("# events={total} multi_brand={multi} suppress={suppress_path}");
     println!("# filters: min_partners={min_partners} min_events={min_events}");
     println!("# columns: brand partners multi_events score");
-    println!("# Review manually. Promote clear SaaS/ESP/WAF/DAM glue into glue.txt.");
+    println!("# Review manually. Promote clear SaaS/ESP/WAF/DAM platforms after review.");
     println!("# Do NOT promote high-volume watchlist brands (kenvue, bms, att, …).");
     println!();
 

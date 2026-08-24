@@ -108,7 +108,7 @@ Goal: firehose → in-process A′ trickle to rotated `alerts.jsonl`, without fi
 3. **Filter logs:** `RUST_LOG=warn` in prod (reconnect / backpressure / failures). Progress counters are `info` (visible when `RUST_LOG=info`); on Oracle use **`curl http://127.0.0.1:9100/status`** (Compose publishes loopback only).
 4. **Rotate container logs.** Compose sets `json-file` `max-size: 10m` / `max-file: 3` on all services.
 5. **Novelty disk bounds:** A′-only skips `hosts` rows; chunk rotate + **20 GiB** total budget + gzip (`NOVELTY_ALERTS_*`).
-6. **Research archive:** default `ARCHIVE_DIR=/var/lib/ct-firehose-filter/archive` under novelty — rotate+gzip; prune oldest sealed `matches.jsonl.*` at `ARCHIVE_MAX_TOTAL_BYTES` (default **50 GiB**; `0` = unlimited). Glue hubs still enqueue (A′ strip only). Oversized SAN lists compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32). `/status` warns at 80% of the cap or `ARCHIVE_DISK_WARN_BYTES` (100 GiB) — that is **not** a host `df` guard. History past the cap is **lossy**; off-box copy sealed `*.gz` if you care (see [`ARCHIVE.md`](ARCHIVE.md)). Disable with `ARCHIVE_DIR=off` only if you accept irreversible filters.
+6. **Research archive:** default `ARCHIVE_DIR=/var/lib/ct-firehose-filter/archive` under novelty — rotate+gzip; prune oldest sealed `matches.jsonl.*` at `ARCHIVE_MAX_TOTAL_BYTES` (default **50 GiB**; `0` = unlimited). Hub-only leaves still enqueue (A′ strip only). Oversized SAN lists compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32). `/status` warns at 80% of the cap or `ARCHIVE_DISK_WARN_BYTES` (100 GiB) — that is **not** a host `df` guard. History past the cap is **lossy**; off-box copy sealed `*.gz` if you care (see [`ARCHIVE.md`](ARCHIVE.md)). Disable with `ARCHIVE_DIR=off` only if you accept irreversible filters.
 7. **systemd/journald:** configure `SystemMaxUse=` / rate limits if not using Docker.
 8. **Resources:** ~100 MiB RSS for a 752k watchlist HashSet (measured — [`SCALE.md`](SCALE.md)) + ~0.5–2 GB for CertStream; CPU follows CT rate;
    durable disk ≈ rotated logs + compact `novelty.db` + budget-capped alerts + **research archive** (+ tiny `ct_index.json`).
@@ -166,7 +166,7 @@ Practical notes:
 
 - Operator checklist: [`DEPLOY.md`](DEPLOY.md).
 - Scale gate: [`SCALE.md`](SCALE.md).
-- Mount full `domains.txt` + [`suppress.txt`](../suppress.txt) + [`glue.txt`](../glue.txt); set `EGRESS=novelty`. Never use demo `keywords.txt` in production.
+- Mount full `domains.txt`; set `EGRESS=novelty`. Never use demo `keywords.txt` in production.
 - Prefer CertStream **`/domains-only`** for smaller frames (see below).
 
 ### `/domains-only` (smaller firehose frames)
@@ -230,8 +230,9 @@ host and set `CERTSTREAM_URL` to that private address (prefer `/domains-only` wh
 ## Live smoke
 
 ```bash
+DUMP_JSONL=/tmp/ct-ma-eval.jsonl \
 CERTSTREAM_URL=ws://127.0.0.1:8080/ cargo run --release --example live_smoke -- \
-  /path/to/domains.txt 900 suppress.txt /tmp/ct-ma-eval.jsonl
+  /path/to/domains.txt 900
 ```
 
 Optional 4th arg (or `DUMP_JSONL=…`) writes every captured match as JSONL for offline review.

@@ -35,7 +35,7 @@ Notes:
 - Older docs guessed ~1 GiB; **measured footprint is ~0.1 GiB**. Keep headroom for
   CertStream (0.5–2 GiB) and OS on a 12 GiB Always Free box.
 - Ignored adversarial load test: **pass** (google / amazonaws hit; evil.example miss;
-  suppress strips mega-apex).
+  suppress is eval-only on `new_with_suppress`, not production inspect).
 
 ## Oracle go / no-go (edge filter only)
 
@@ -45,7 +45,7 @@ Notes:
 | Match throughput | **>>** live tip (hundreds/s steady; catch-up thousands/s) | **GO** (~1.1M inspect/s) |
 | Full list loads | `full_domains_txt_loads` ignored test | **GO** |
 | Demo vs prod list | Never ship with default `keywords.txt` as watchlist | See [`DEPLOY.md`](DEPLOY.md) |
-| Product SNR | Raw emit still ~1M/hr; needs glue + novelty for humans | **NO-GO for “ready product”** — see [`SIGNAL.md`](SIGNAL.md) |
+| Product SNR | Raw emit still ~1M/hr; needs event-df + novelty for humans | **NO-GO for “ready product”** — see [`SIGNAL.md`](SIGNAL.md) |
 
 **Verdict for Oracle Always Free co-located CertStream + filter:** memory/CPU for a 752k
 HashSet watchlist is **GO**. **Product** prod-ready still requires continuous A′ novelty on

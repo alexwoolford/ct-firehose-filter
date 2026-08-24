@@ -8,10 +8,13 @@ use crate::error::KeywordSourceError;
 use crate::event::{FrameMeta, MatchEvent};
 
 /// Result of inspecting SANs against the watchlist (+ optional suppress set).
+/// Production inspect uses an empty suppress set ([`DomainWatchlist::new`]): every
+/// watchlist hit archives. [`new_with_suppress`] remains for tests / eval.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InspectOutcome {
     pub event: Option<MatchEvent>,
     /// Watchlist matched, but every implicated name was on the suppress list.
+    /// Production inspect has an empty suppress set, so this stays false.
     pub fully_suppressed: bool,
 }
 
@@ -45,10 +48,9 @@ impl InspectOutcome {
 /// `amazonaws.com`). Brand-in-label and hyphen-token fuzzy matching are out of
 /// scope — they false-positive heavily on large lists.
 ///
-/// Optional **suppress** names (CT mega-apexes in `suppress.txt`) are stripped
-/// before emit: a cert egresses only if at least one non-suppressed watchlist
-/// name remains. Platform glue (`glue.txt`) is **not** part of this set — it
-/// strips A′ later so hub-only leaves still enqueue and archive.
+/// Optional **suppress** names exist only on [`new_with_suppress`]. Production
+/// inspect is [`DomainWatchlist::new`]: every watchlist hit enqueues. A′ ignore
+/// (event-df / partner-degree, plus optional operator files) lives in NoveltySink.
 pub struct DomainWatchlist {
     names: HashSet<String>,
     suppress: HashSet<String>,
@@ -236,18 +238,18 @@ pub fn load_domain_file(path: impl AsRef<Path>) -> Result<Vec<String>, KeywordSo
     Ok(parse_domain_lines(&text))
 }
 
-/// Load a suppress file. Missing path yields an empty list (no suppression).
+/// Load an optional classifier / ignore file. Empty or missing path ⇒ no names.
 pub fn load_suppress_file(path: impl AsRef<Path>) -> Result<Vec<String>, KeywordSourceError> {
     let path = path.as_ref();
-    if !path.exists() {
+    if path.as_os_str().is_empty() || !path.exists() {
         return Ok(Vec::new());
     }
     load_domain_file(path)
 }
 
-/// Merge mega-apex suppress + SaaS-glue lists for **A′ ignore** (NoveltySink).
-/// Do **not** pass this set to [`DomainWatchlist::new_with_suppress`] — that would
-/// drop glue-only leaves from the archive. Inspect uses [`load_suppress_file`] only.
+/// Merge optional operator ignore files for NoveltySink (not inspect).
+/// Production inspect is [`DomainWatchlist::new`] — do not pass this set to
+/// [`DomainWatchlist::new_with_suppress`] or those names never archive.
 pub fn load_suppress_and_glue(
     suppress_path: impl AsRef<Path>,
     glue_path: impl AsRef<Path>,

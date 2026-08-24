@@ -2,7 +2,7 @@
 //!
 //! Used by offline `novelty_replay` and in-process `EGRESS=novelty`.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -81,6 +81,20 @@ pub struct NoveltyPolicy {
     /// Max raw leaf SAN count (inclusive) for A′ emit. Larger certs are recorded in DB
     /// but not emitted (Firebase/hosting mega-SAN packing). Default **32**. `0` disables.
     pub max_san_count: u32,
+    /// Drop a brand from A′ when its partner degree is ≥ this (learned packing hub).
+    /// Default **25**. `0` disables the degree gate.
+    pub max_partner_degree: u32,
+    /// Drop a brand from A′ when its solo+multi event count is ≥ this (IDF / mega-apex).
+    /// Default **25**. `0` disables. Amazon warms on this clock, not partner degree.
+    pub max_brand_df: u32,
+    /// Mute A′ emit (still record coalitions + degree). Set by the sink from DB burn-in.
+    pub calibrating: bool,
+    /// Burn-in wall time (seconds from first DB open). `0` disables the time gate.
+    pub calibrate_secs: u64,
+    /// Burn-in multi-brand event count. `0` disables the event gate.
+    pub calibrate_events: u64,
+    /// When true, `process_match` fills `ProcessStats::candidate` for the learning feed.
+    pub emit_candidates: bool,
 }
 
 impl Default for NoveltyPolicy {
@@ -91,6 +105,12 @@ impl Default for NoveltyPolicy {
             skip_routine: true,
             max_coalition_len: 5,
             max_san_count: 32,
+            max_partner_degree: 25,
+            max_brand_df: 25,
+            calibrating: false,
+            calibrate_secs: 0,
+            calibrate_events: 0,
+            emit_candidates: false,
         }
     }
 }
@@ -106,9 +126,7 @@ impl NoveltyPolicy {
             Self {
                 want_a,
                 want_b,
-                skip_routine: true,
-                max_coalition_len: 5,
-                max_san_count: 32,
+                ..Self::default()
             }
         };
         if let Ok(raw) = std::env::var("NOVELTY_MAX_COALITION") {
@@ -119,6 +137,26 @@ impl NoveltyPolicy {
         if let Ok(raw) = std::env::var("NOVELTY_MAX_SANS") {
             if let Ok(n) = raw.parse::<u32>() {
                 policy.max_san_count = n;
+            }
+        }
+        if let Ok(raw) = std::env::var("NOVELTY_MAX_PARTNER_DEGREE") {
+            if let Ok(n) = raw.parse::<u32>() {
+                policy.max_partner_degree = n;
+            }
+        }
+        if let Ok(raw) = std::env::var("NOVELTY_MAX_BRAND_DF") {
+            if let Ok(n) = raw.parse::<u32>() {
+                policy.max_brand_df = n;
+            }
+        }
+        if let Ok(raw) = std::env::var("NOVELTY_CALIBRATE_SECS") {
+            if let Ok(n) = raw.parse::<u64>() {
+                policy.calibrate_secs = n;
+            }
+        }
+        if let Ok(raw) = std::env::var("NOVELTY_CALIBRATE_EVENTS") {
+            if let Ok(n) = raw.parse::<u64>() {
+                policy.calibrate_events = n;
             }
         }
         policy
@@ -136,6 +174,25 @@ pub struct ProcessStats {
     pub a_oversized_dropped: u64,
     /// A′ coalitions inserted but not emitted (san_count > max_san_count).
     pub a_mega_san_dropped: u64,
+    /// First-seen multi-brand left with <2 low-df brands (hub×customer → T′).
+    pub a_high_df_dropped: u64,
+    /// First-seen coalition recorded but A′ muted during burn-in.
+    pub a_calibrate_muted: u64,
+    /// Learning-feed row (set when `policy.emit_candidates`).
+    pub candidate: Option<NoveltyCandidate>,
+}
+
+/// Unusual first-seen coalition for human evaluation (not the product pager).
+#[derive(Debug, Clone, Serialize)]
+pub struct NoveltyCandidate {
+    pub schema_version: u32,
+    #[serde(rename = "kind")]
+    pub kind: &'static str,
+    pub reason: &'static str,
+    pub coalition: Vec<String>,
+    pub degrees: BTreeMap<String, u32>,
+    pub event_counts: BTreeMap<String, u32>,
+    pub fingerprint: Option<String>,
 }
 
 /// Leaf SAN count for mega-SAN gating. Prefer inspect-time `san_count`; if unset
@@ -148,7 +205,7 @@ pub fn effective_san_count(ev: &MatchEvent) -> u32 {
     }
 }
 
-/// Apply suppress/glue filter, update novelty DB, return zero or more alerts.
+/// Apply ignore set + event-df + partner-degree filter, update novelty DB, return zero or more alerts.
 pub fn process_match(
     store: &NoveltyStore,
     ignore: &HashSet<String>,
@@ -156,9 +213,26 @@ pub fn process_match(
     ev: &MatchEvent,
 ) -> Result<(Vec<NoveltyAlert>, ProcessStats), rusqlite::Error> {
     let mut stats = ProcessStats::default();
-    let brands = filter_brands(ev, ignore);
+    let full = unique_keywords(ev);
+    if full.len() >= 2 {
+        store.record_cooccurrence(&full)?;
+    } else if !full.is_empty() {
+        store.record_appearances(&full)?;
+    }
+
+    let brands = a_prime_brands(store, &full, ignore, policy)?;
     if brands.is_empty() {
-        stats.fully_ignored = 1;
+        if full.len() >= 2 {
+            let ts = event_ts(ev);
+            let key = full.join("\u{1f}");
+            if store.insert_coalition(&key, ts)? {
+                stats.coalitions_inserted = 1;
+                stats.a_high_df_dropped = 1;
+                maybe_candidate(&mut stats, policy, store, &full, &full, ev, "high_df")?;
+            }
+        } else {
+            stats.fully_ignored = 1;
+        }
         return Ok((Vec::new(), stats));
     }
 
@@ -186,8 +260,12 @@ pub fn process_match(
                 stats.a_oversized_dropped = 1;
             } else if policy.max_san_count > 0 && effective_san_count(ev) > policy.max_san_count {
                 stats.a_mega_san_dropped = 1;
+            } else if policy.calibrating {
+                stats.a_calibrate_muted = 1;
+                maybe_candidate(&mut stats, policy, store, &full, &brands, ev, "calibrating")?;
             } else {
                 stats.alerts_a = 1;
+                maybe_candidate(&mut stats, policy, store, &full, &brands, ev, "a_prime")?;
                 alerts.push(NoveltyAlert {
                     schema_version: MATCH_ARCHIVE_SCHEMA_VERSION,
                     kind: NoveltyKind::A { coalition: brands },
@@ -196,6 +274,16 @@ pub fn process_match(
             }
         }
         return Ok((alerts, stats));
+    }
+
+    // One low-df brand left: hub×customer after degree strip (T′ via archive).
+    if full.len() >= 2 {
+        let key = full.join("\u{1f}");
+        if store.insert_coalition(&key, ts)? {
+            stats.coalitions_inserted = 1;
+            stats.a_high_df_dropped = 1;
+            maybe_candidate(&mut stats, policy, store, &full, &brands, ev, "high_df")?;
+        }
     }
 
     // Single-brand: nothing to do for A′-only (avoids unbounded hosts growth).
@@ -232,6 +320,110 @@ pub fn process_match(
         });
     }
     Ok((alerts, stats))
+}
+
+fn maybe_candidate(
+    stats: &mut ProcessStats,
+    policy: &NoveltyPolicy,
+    store: &NoveltyStore,
+    full: &[String],
+    coalition: &[String],
+    ev: &MatchEvent,
+    reason: &'static str,
+) -> Result<(), rusqlite::Error> {
+    if !policy.emit_candidates {
+        return Ok(());
+    }
+    let mut degrees = BTreeMap::new();
+    let mut event_counts = BTreeMap::new();
+    for b in full {
+        degrees.insert(b.clone(), store.partner_degree(b)?);
+        event_counts.insert(b.clone(), store.event_count(b)?);
+    }
+    stats.candidate = Some(NoveltyCandidate {
+        schema_version: MATCH_ARCHIVE_SCHEMA_VERSION,
+        kind: "candidate",
+        reason,
+        coalition: coalition.to_vec(),
+        degrees,
+        event_counts,
+        fingerprint: ev.fingerprint.clone(),
+    });
+    Ok(())
+}
+
+pub fn unique_keywords(ev: &MatchEvent) -> Vec<String> {
+    let mut brands: Vec<String> = ev
+        .matched_keywords
+        .iter()
+        .map(|k| k.to_ascii_lowercase())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    brands.sort();
+    brands
+}
+
+fn effective_degree(
+    store: &NoveltyStore,
+    brand: &str,
+    ignore: &HashSet<String>,
+    max_partner_degree: u32,
+) -> Result<u32, rusqlite::Error> {
+    let observed = store.partner_degree(brand)?;
+    if max_partner_degree > 0 && ignore.contains(brand) {
+        Ok(observed.max(max_partner_degree))
+    } else {
+        Ok(observed)
+    }
+}
+
+fn is_learned_hub(
+    store: &NoveltyStore,
+    brand: &str,
+    ignore: &HashSet<String>,
+    policy: &NoveltyPolicy,
+) -> Result<bool, rusqlite::Error> {
+    let seed = ignore.contains(brand) && (policy.max_partner_degree > 0 || policy.max_brand_df > 0);
+    if seed {
+        return Ok(true);
+    }
+    if policy.max_brand_df > 0 && store.event_count(brand)? >= policy.max_brand_df {
+        return Ok(true);
+    }
+    if policy.max_partner_degree > 0
+        && effective_degree(store, brand, ignore, policy.max_partner_degree)?
+            >= policy.max_partner_degree
+    {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// Brands that may form an A′ coalition: below event-df and partner-degree caps.
+pub fn a_prime_brands(
+    store: &NoveltyStore,
+    full: &[String],
+    ignore: &HashSet<String>,
+    policy: &NoveltyPolicy,
+) -> Result<Vec<String>, rusqlite::Error> {
+    if policy.max_partner_degree == 0 && policy.max_brand_df == 0 {
+        let mut brands: Vec<String> = full
+            .iter()
+            .filter(|k| !ignore.contains(k.as_str()))
+            .cloned()
+            .collect();
+        brands.sort();
+        return Ok(brands);
+    }
+    let mut out = Vec::new();
+    for b in full {
+        if is_learned_hub(store, b, ignore, policy)? {
+            continue;
+        }
+        out.push(b.clone());
+    }
+    Ok(out)
 }
 
 pub fn filter_brands(ev: &MatchEvent, ignore: &HashSet<String>) -> Vec<String> {
@@ -524,5 +716,178 @@ mod tests {
             Some("fp-mixed".into()),
         );
         assert_eq!(filter_brands(&mixed, &ignore), vec!["acme.com".to_string()]);
+    }
+
+    #[test]
+    fn high_df_brand_silences_aws_plus_customer() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore = HashSet::new();
+        let policy = NoveltyPolicy {
+            max_partner_degree: 3,
+            ..NoveltyPolicy::default()
+        };
+        for i in 0..4 {
+            store
+                .record_cooccurrence(&["amazonaws.com".into(), format!("cust{i}.com")])
+                .unwrap();
+        }
+        assert!(store.partner_degree("amazonaws.com").unwrap() >= 3);
+
+        let ev = MatchEvent::new(
+            vec!["s3.amazonaws.com".into(), "sso.acme.com".into()],
+            vec!["amazonaws.com".into(), "acme.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-aws-acme".into()),
+        );
+        let (alerts, s) = process_match(&store, &ignore, &policy, &ev).unwrap();
+        assert!(alerts.is_empty(), "{alerts:?}");
+        assert_eq!(s.alerts_a, 0);
+        assert_eq!(s.a_high_df_dropped, 1);
+        assert_eq!(s.coalitions_inserted, 1);
+    }
+
+    #[test]
+    fn scarce_pair_still_alerts_after_unrelated_hub_df() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore = HashSet::new();
+        let policy = NoveltyPolicy {
+            max_partner_degree: 3,
+            ..NoveltyPolicy::default()
+        };
+        for i in 0..4 {
+            store
+                .record_cooccurrence(&["amazonaws.com".into(), format!("cust{i}.com")])
+                .unwrap();
+        }
+        let ev = MatchEvent::new(
+            vec!["sso.acme.com".into(), "vpn.widget.com".into()],
+            vec!["acme.com".into(), "widget.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-scarce".into()),
+        );
+        let (alerts, s) = process_match(&store, &ignore, &policy, &ev).unwrap();
+        assert_eq!(s.alerts_a, 1);
+        match &alerts[0].kind {
+            NoveltyKind::A { coalition } => {
+                assert_eq!(
+                    coalition,
+                    &["acme.com".to_string(), "widget.com".to_string()]
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn calibrate_records_coalition_but_does_not_emit() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore = HashSet::new();
+        let policy = NoveltyPolicy {
+            calibrating: true,
+            emit_candidates: true,
+            ..NoveltyPolicy::default()
+        };
+        let ev = MatchEvent::new(
+            vec!["sso.acme.com".into(), "vpn.widget.com".into()],
+            vec!["acme.com".into(), "widget.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-cal".into()),
+        );
+        let (alerts, s) = process_match(&store, &ignore, &policy, &ev).unwrap();
+        assert!(alerts.is_empty());
+        assert_eq!(s.a_calibrate_muted, 1);
+        assert_eq!(s.coalitions_inserted, 1);
+        assert_eq!(s.candidate.as_ref().map(|c| c.reason), Some("calibrating"));
+
+        let policy_live = NoveltyPolicy::default();
+        let (alerts2, s2) = process_match(&store, &ignore, &policy_live, &ev).unwrap();
+        assert!(
+            alerts2.is_empty(),
+            "burn-in first-seen must not replay as A′"
+        );
+        assert_eq!(s2.alerts_a, 0);
+        assert_eq!(s2.coalitions_inserted, 0);
+    }
+
+    #[test]
+    fn ignore_set_silences_cold_aws_acme_with_no_partners() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        store.seed_degree_floor(["amazonaws.com"], 25).unwrap();
+        let ignore: HashSet<String> = ["amazonaws.com".into()].into_iter().collect();
+        let policy = NoveltyPolicy::default();
+        let ev = MatchEvent::new(
+            vec!["s3.amazonaws.com".into(), "sso.acme.com".into()],
+            vec!["amazonaws.com".into(), "acme.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-seed-cold".into()),
+        );
+        let (alerts, s) = process_match(&store, &ignore, &policy, &ev).unwrap();
+        assert!(
+            alerts.is_empty(),
+            "seed floor must mute AWS×Acme: {alerts:?}"
+        );
+        assert_eq!(s.alerts_a, 0);
+        assert_eq!(s.a_high_df_dropped, 1);
+        assert_eq!(store.partner_degree("amazonaws.com").unwrap(), 25);
+    }
+
+    #[test]
+    fn empty_ignore_cold_aws_acme_still_alerts() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore = HashSet::new();
+        let policy = NoveltyPolicy::default();
+        let ev = MatchEvent::new(
+            vec!["s3.amazonaws.com".into(), "sso.acme.com".into()],
+            vec!["amazonaws.com".into(), "acme.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-empty-cold".into()),
+        );
+        let (alerts, s) = process_match(&store, &ignore, &policy, &ev).unwrap();
+        assert_eq!(s.alerts_a, 1, "without lists, first mixed is A′");
+        match &alerts[0].kind {
+            NoveltyKind::A { coalition } => {
+                assert_eq!(
+                    coalition,
+                    &["acme.com".to_string(), "amazonaws.com".to_string()]
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn live_event_df_silences_aws_after_solo_hits() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        let ignore = HashSet::new();
+        let policy = NoveltyPolicy::default();
+        for i in 0..25 {
+            let solo = MatchEvent::new(
+                vec!["s3.amazonaws.com".into()],
+                vec!["amazonaws.com".into()],
+                Some(1.0),
+                None,
+                Some(format!("fp-solo-{i}")),
+            );
+            let (alerts, _) = process_match(&store, &ignore, &policy, &solo).unwrap();
+            assert!(alerts.is_empty());
+        }
+        assert_eq!(store.event_count("amazonaws.com").unwrap(), 25);
+        assert_eq!(store.partner_degree("amazonaws.com").unwrap(), 0);
+
+        let mixed = MatchEvent::new(
+            vec!["s3.amazonaws.com".into(), "sso.acme.com".into()],
+            vec!["amazonaws.com".into(), "acme.com".into()],
+            Some(1.0),
+            None,
+            Some("fp-df-mixed".into()),
+        );
+        let (alerts, s) = process_match(&store, &ignore, &policy, &mixed).unwrap();
+        assert!(alerts.is_empty(), "event-df must mute AWS×Acme: {alerts:?}");
+        assert_eq!(s.a_high_df_dropped, 1);
     }
 }

@@ -55,8 +55,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
     let require_db = env_flag("NOVELTY_REQUIRE_DB", false);
-    let suppress_path = env::var("SUPPRESS_FILE").unwrap_or_else(|_| "suppress.txt".to_string());
-    let glue_path = env::var("GLUE_FILE").unwrap_or_else(|_| "glue.txt".to_string());
+    let suppress_path = env::var("SUPPRESS_FILE").unwrap_or_default();
+    let glue_path = env::var("GLUE_FILE").unwrap_or_default();
     let mut policy = NoveltyPolicy::from_tiers(env::var("NOVELTY_TIERS").ok().as_deref());
     policy.skip_routine = env_flag("NOVELTY_SKIP_ROUTINE", true);
 
@@ -81,6 +81,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let store = NoveltyStore::open(&db_path)?;
+    store.seed_degree_floor(
+        ignore.iter(),
+        policy.max_partner_degree.max(policy.max_brand_df),
+    )?;
     let alerts_cfg = AlertsFileConfig::from_env(&alerts_path);
     // Offline replay truncates alerts by default (fresh File::create behavior via recreate).
     let _ = std::fs::remove_file(&alerts_path);
@@ -96,6 +100,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut alerts_b = 0u64;
     let mut a_oversized = 0u64;
     let mut a_mega_san = 0u64;
+    let mut a_high_df = 0u64;
+    let mut a_calibrate = 0u64;
     let mut seen_dedupe: HashSet<String> = HashSet::new();
     let mut sample_a = 0usize;
 
@@ -112,12 +118,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
 
-        let (new_alerts, stats) = process_match(&store, &ignore, &policy, &ev)?;
+        let mut policy_now = policy;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+            .unwrap_or(0);
+        policy_now.calibrating =
+            store.is_calibrating(now, policy.calibrate_secs, policy.calibrate_events)?;
+        let (new_alerts, stats) = process_match(&store, &ignore, &policy_now, &ev)?;
         fully_ignored += stats.fully_ignored;
         alerts_a += stats.alerts_a;
         alerts_b += stats.alerts_b;
         a_oversized += stats.a_oversized_dropped;
         a_mega_san += stats.a_mega_san_dropped;
+        a_high_df += stats.a_high_df_dropped;
+        a_calibrate += stats.a_calibrate_muted;
 
         for alert in &new_alerts {
             let body = serde_json::to_vec(alert)?;
@@ -143,12 +158,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("require_db:         {require_db}");
     println!("suppress+glue:      {} names", ignore.len());
     println!(
-        "tiers:              A={} B={} skip_routine={} max_coalition={} max_sans={}",
+        "tiers:              A={} B={} skip_routine={} max_coalition={} max_sans={} max_degree={} cal_secs={} cal_events={}",
         policy.want_a,
         policy.want_b,
         policy.skip_routine,
         policy.max_coalition_len,
-        policy.max_san_count
+        policy.max_san_count,
+        policy.max_partner_degree,
+        policy.calibrate_secs,
+        policy.calibrate_events
     );
     println!("events_total:       {total}");
     println!("dedupe_dropped:     {dedupe_dropped}");
@@ -157,6 +175,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("alerts_A_prime:     {alerts_a}");
     println!("a_oversized_drop:   {a_oversized}");
     println!("a_mega_san_drop:    {a_mega_san}");
+    println!("a_high_df_drop:     {a_high_df}");
+    println!("a_calibrate_muted:  {a_calibrate}");
     println!("alerts_B_prime:     {alerts_b}");
     println!("alerts_total:       {alert_total}");
     println!("db_coalitions:      {db_pairs}");

@@ -2,10 +2,10 @@
 //!
 //! ```bash
 //! cargo run --release --example rank_signal -- \
-//!   /tmp/ct-ma-eval.jsonl glue.txt 25
+//!   /tmp/ct-ma-eval.jsonl
 //! ```
 //!
-//! Args: `<jsonl> [glue_file] [sample_n]`
+//! Args: `<jsonl> [optional_glue_classifier] [sample_n]`
 //! Env: `GLUE_FILE` overrides 2nd arg when set.
 //!
 //! Tiers (signal-preserving — does not drop busy brands):
@@ -30,10 +30,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let glue_path = env::var("GLUE_FILE")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| env::args().nth(2).unwrap_or_else(|| "glue.txt".to_string()));
+        .or_else(|| env::args().nth(2).filter(|s| s.parse::<usize>().is_err()))
+        .unwrap_or_default();
     let sample_n: usize = env::args()
         .nth(3)
         .and_then(|s| s.parse().ok())
+        .or_else(|| env::args().nth(2).and_then(|s| s.parse().ok()))
         .unwrap_or(25);
 
     let glue: HashSet<String> = load_suppress_file(&glue_path)?

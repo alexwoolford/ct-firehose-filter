@@ -3,14 +3,14 @@
 //! Prefer a self-hosted sidecar (see docs/CERTSTREAM.md):
 //!
 //! ```bash
-//! CERTSTREAM_URL=ws://127.0.0.1:8080/ cargo run --release --example live_smoke -- \
-//!   /path/to/domains.txt 900 suppress.txt \
-//!   /tmp/ct-ma-eval.jsonl
+//! DUMP_JSONL=/tmp/ct-ma-eval.jsonl \
+//!   CERTSTREAM_URL=ws://127.0.0.1:8080/ cargo run --release --example live_smoke -- \
+//!   /path/to/domains.txt 900
 //! ```
 //!
-//! Args: `<watchlist> [secs] [suppress_file] [dump_jsonl_path]`
-//! Env: `SUPPRESS_FILE`, `DUMP_JSONL` (overrides 4th arg).
-//! Inspect uses suppress.txt only (glue is A′ strip, not an ingest drop).
+//! Args: `<watchlist> [secs] [optional_classifier] [dump_jsonl_path]`
+//! Env: `SUPPRESS_FILE` (optional classifier for eval `new_with_suppress`),
+//! `DUMP_JSONL` (overrides 4th arg). Production inspect does not drop.
 
 use std::env;
 use std::fs::File;
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let suppress_path = env::args()
         .nth(3)
         .or_else(|| env::var("SUPPRESS_FILE").ok())
-        .unwrap_or_else(|| "suppress.txt".to_string());
+        .filter(|s| !s.trim().is_empty());
     let dump_path: Option<PathBuf> = env::var("DUMP_JSONL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -55,14 +55,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let started = Instant::now();
     let names = load_domain_file(&watchlist_path)?;
-    let suppress = load_suppress_file(&suppress_path)?;
+    let suppress = match &suppress_path {
+        Some(p) => load_suppress_file(p)?,
+        None => Vec::new(),
+    };
     let watchlist = DomainWatchlist::new_with_suppress(&names, &suppress);
     tracing::info!(
         watchlist = watchlist.len(),
         suppress = watchlist.suppress_len(),
         elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
         path = %watchlist_path,
-        suppress_path = %suppress_path,
+        suppress_path = ?suppress_path,
         dump_jsonl = ?dump_path,
         "loaded watchlist"
     );

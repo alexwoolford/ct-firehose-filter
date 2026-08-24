@@ -1,7 +1,7 @@
 //! Research archive for commercial / multi-year backtests.
 //!
 //! Product path (`EGRESS=novelty`) stays a quiet A′ trickle. This module appends
-//! every **enqueued** MatchEvent (post watchlist/suppress, pre novelty gates) with
+//! every **enqueued** MatchEvent (post watchlist, pre novelty gates) with
 //! full leaf SAN lists and a config hash so filters remain reversible offline.
 //!
 //! See [`docs/ARCHIVE.md`](../../docs/ARCHIVE.md).
@@ -555,7 +555,7 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(out)
 }
 
-/// Snapshot watchlist/suppress/glue + env knobs; returns new provenance.
+/// Snapshot watchlist plus optional ignore files + env knobs; returns new provenance.
 pub fn write_config_snapshot(
     archive_dir: &Path,
     watchlist: &Path,
@@ -583,6 +583,14 @@ pub fn write_config_snapshot(
     let novelty_max_coalition =
         std::env::var("NOVELTY_MAX_COALITION").unwrap_or_else(|_| "5".into());
     let novelty_max_sans = std::env::var("NOVELTY_MAX_SANS").unwrap_or_else(|_| "32".into());
+    let novelty_max_partner_degree =
+        std::env::var("NOVELTY_MAX_PARTNER_DEGREE").unwrap_or_else(|_| "25".into());
+    let novelty_max_brand_df =
+        std::env::var("NOVELTY_MAX_BRAND_DF").unwrap_or_else(|_| "25".into());
+    let novelty_calibrate_secs =
+        std::env::var("NOVELTY_CALIBRATE_SECS").unwrap_or_else(|_| "0".into());
+    let novelty_calibrate_events =
+        std::env::var("NOVELTY_CALIBRATE_EVENTS").unwrap_or_else(|_| "0".into());
 
     let meta = serde_json::json!({
         "schema_version": MATCH_ARCHIVE_SCHEMA_VERSION,
@@ -594,6 +602,10 @@ pub fn write_config_snapshot(
         "novelty_tiers": novelty_tiers,
         "novelty_max_coalition": novelty_max_coalition,
         "novelty_max_sans": novelty_max_sans,
+        "novelty_max_partner_degree": novelty_max_partner_degree,
+        "novelty_max_brand_df": novelty_max_brand_df,
+        "novelty_calibrate_secs": novelty_calibrate_secs,
+        "novelty_calibrate_events": novelty_calibrate_events,
         "certstream_url": std::env::var("CERTSTREAM_URL").unwrap_or_default(),
     });
     let meta_bytes = serde_json::to_vec_pretty(&meta).map_err(std::io::Error::other)?;
@@ -613,6 +625,14 @@ pub fn write_config_snapshot(
     hash_input.push_str(&novelty_max_coalition);
     hash_input.push('\n');
     hash_input.push_str(&novelty_max_sans);
+    hash_input.push('\n');
+    hash_input.push_str(&novelty_max_partner_degree);
+    hash_input.push('\n');
+    hash_input.push_str(&novelty_max_brand_df);
+    hash_input.push('\n');
+    hash_input.push_str(&novelty_calibrate_secs);
+    hash_input.push('\n');
+    hash_input.push_str(&novelty_calibrate_events);
     hash_input.push('\n');
     let config_hash = sha256_hex(hash_input.as_bytes());
     fs::write(dest.join("config_hash.txt"), format!("{config_hash}\n"))?;

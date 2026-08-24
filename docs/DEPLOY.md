@@ -20,7 +20,7 @@ Product output stays on the VM (`novelty.db` + `alerts.jsonl`). Off-box streamin
 |---|---|---|
 | Scale | Filter RSS/throughput fit Always Free | [`SCALE.md`](SCALE.md) — **GO** (~100 MiB, ~1M inspect/s) |
 | Full watchlist | `WATCHLIST_HOST_PATH` → `domains.txt`; prod `EGRESS` refuses len &lt; 100k (`WATCHLIST_MIN_LEN`) | this doc |
-| Glue + size cap | [`glue.txt`](../glue.txt) reviewed; A′ drops coalitions size ≥6 | [`SIGNAL.md`](SIGNAL.md#precision-audit-screened-in-vs-screened-out) |
+| Glue + size + df | A′ drops coalitions size ≥6; event-df 25; partner-degree 25 | [`SIGNAL.md`](SIGNAL.md#precision-audit-screened-in-vs-screened-out) |
 | Quiet ops | Log rotation + `RUST_LOG=warn` + `/status` on `127.0.0.1:9100` + never `EGRESS=stdout` | [`CERTSTREAM.md`](CERTSTREAM.md#quiet-production-checklist) |
 | Novelty A′ | `EGRESS=novelty` + durable `NOVELTY_DB` + budget-capped `alerts.jsonl` | [`SIGNAL.md`](SIGNAL.md) |
 | Decision-grade | Warm ≥7d, precision ≥70%, ownership surprise filter | [`SIGNAL.md`](SIGNAL.md#why-this-signal-matters-pe--corp-dev-diligence) — **not yet** |
@@ -127,8 +127,9 @@ Do **not** cut over cold. Run locally first.
 ```bash
 docker compose up -d certstream
 # Wait until ws://127.0.0.1:8080/ serves, then capture a tip window (900s ≈ 15m):
+DUMP_JSONL=/tmp/ct-ma-eval.jsonl \
 CERTSTREAM_URL=ws://127.0.0.1:8080/ cargo run --release --example live_smoke -- \
-  /path/to/domains.txt 900 suppress.txt /tmp/ct-ma-eval.jsonl
+  /path/to/domains.txt 900
 export WATCHLIST_HOST_PATH=/path/to/domains.txt   # full list ≥100k for --compose
 ```
 

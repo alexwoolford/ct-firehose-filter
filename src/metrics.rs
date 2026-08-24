@@ -11,7 +11,8 @@ pub struct PipelineMetrics {
     pub frames_ignored: AtomicU64,
     pub frames_malformed: AtomicU64,
     pub matches_enqueued: AtomicU64,
-    /// Watchlist hit whose implicated names were all on the suppress list.
+    /// Watchlist hit whose implicated names were all on the inspect suppress list.
+    /// Production inspect uses an empty set, so this stays 0.
     pub matches_suppressed: AtomicU64,
     pub channel_full: AtomicU64,
     pub reconnects: AtomicU64,
@@ -25,6 +26,12 @@ pub struct PipelineMetrics {
     pub novelty_fully_ignored: AtomicU64,
     /// First-seen coalition keys inserted into `novelty.db` this process.
     pub novelty_coalitions_inserted: AtomicU64,
+    /// First-seen hub×customer after degree strip (T′, not A′).
+    pub novelty_high_df_dropped: AtomicU64,
+    /// First-seen coalitions muted during burn-in.
+    pub novelty_calibrate_muted: AtomicU64,
+    /// 1 while listen-first burn-in is active.
+    pub novelty_calibrating: AtomicU64,
     /// Research archive lines written this process.
     pub archive_events_written: AtomicU64,
     pub archive_bytes_written: AtomicU64,
@@ -60,6 +67,19 @@ impl PipelineMetrics {
             self.novelty_coalitions_inserted
                 .fetch_add(stats.coalitions_inserted, Ordering::Relaxed);
         }
+        if stats.a_high_df_dropped > 0 {
+            self.novelty_high_df_dropped
+                .fetch_add(stats.a_high_df_dropped, Ordering::Relaxed);
+        }
+        if stats.a_calibrate_muted > 0 {
+            self.novelty_calibrate_muted
+                .fetch_add(stats.a_calibrate_muted, Ordering::Relaxed);
+        }
+    }
+
+    pub fn set_novelty_calibrating(&self, on: bool) {
+        self.novelty_calibrating
+            .store(u64::from(on), Ordering::Relaxed);
     }
 
     pub fn snapshot(&self) -> MetricsSnapshot {
@@ -79,6 +99,9 @@ impl PipelineMetrics {
             novelty_mega_san_dropped: self.novelty_mega_san_dropped.load(Ordering::Relaxed),
             novelty_fully_ignored: self.novelty_fully_ignored.load(Ordering::Relaxed),
             novelty_coalitions_inserted: self.novelty_coalitions_inserted.load(Ordering::Relaxed),
+            novelty_high_df_dropped: self.novelty_high_df_dropped.load(Ordering::Relaxed),
+            novelty_calibrate_muted: self.novelty_calibrate_muted.load(Ordering::Relaxed),
+            novelty_calibrating: self.novelty_calibrating.load(Ordering::Relaxed),
             archive_events_written: self.archive_events_written.load(Ordering::Relaxed),
             archive_bytes_written: self.archive_bytes_written.load(Ordering::Relaxed),
         }
@@ -102,6 +125,9 @@ pub struct MetricsSnapshot {
     pub novelty_mega_san_dropped: u64,
     pub novelty_fully_ignored: u64,
     pub novelty_coalitions_inserted: u64,
+    pub novelty_high_df_dropped: u64,
+    pub novelty_calibrate_muted: u64,
+    pub novelty_calibrating: u64,
     pub archive_events_written: u64,
     pub archive_bytes_written: u64,
 }
@@ -133,6 +159,9 @@ pub async fn run_progress_logger(
                     novelty_oversized_dropped = s.novelty_oversized_dropped,
                     novelty_mega_san_dropped = s.novelty_mega_san_dropped,
                     novelty_coalitions_inserted = s.novelty_coalitions_inserted,
+                    novelty_high_df_dropped = s.novelty_high_df_dropped,
+                    novelty_calibrate_muted = s.novelty_calibrate_muted,
+                    novelty_calibrating = s.novelty_calibrating,
                     archive_events_written = s.archive_events_written,
                     archive_bytes_written = s.archive_bytes_written,
                     "pipeline progress"

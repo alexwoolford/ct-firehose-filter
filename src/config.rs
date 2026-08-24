@@ -11,8 +11,6 @@ use crate::pipeline::{PipelineConfig, DEFAULT_CHANNEL_CAPACITY};
 
 const DEFAULT_CERTSTREAM_URL: &str = "wss://certstream.calidog.io/";
 const DEFAULT_WATCHLIST_FILE: &str = "keywords.txt";
-const DEFAULT_SUPPRESS_FILE: &str = "suppress.txt";
-const DEFAULT_GLUE_FILE: &str = "glue.txt";
 const DEFAULT_FLUSH_SECS: u64 = 5;
 const DEFAULT_RECONNECT_MS: u64 = 2_000;
 const DEFAULT_RECONNECT_MAX_MS: u64 = 60_000;
@@ -57,8 +55,9 @@ impl FromStr for EgressBackend {
 pub struct Config {
     pub certstream_url: String,
     pub watchlist_file: PathBuf,
+    /// Optional operator A′ ignore (`SUPPRESS_FILE`). Unset/empty = none.
     pub suppress_file: PathBuf,
-    /// Platform glue apexes: A′ strip only (not merged into inspect/archive drop).
+    /// Optional operator A′ ignore (`GLUE_FILE`). Unset/empty = none.
     pub glue_file: PathBuf,
     pub egress: EgressBackend,
     pub novelty_db: PathBuf,
@@ -84,9 +83,8 @@ impl Config {
         let watchlist_file = env::var("WATCHLIST_FILE")
             .or_else(|_| env::var("KEYWORDS_FILE"))
             .unwrap_or_else(|_| DEFAULT_WATCHLIST_FILE.to_string());
-        let suppress_file =
-            env::var("SUPPRESS_FILE").unwrap_or_else(|_| DEFAULT_SUPPRESS_FILE.to_string());
-        let glue_file = env::var("GLUE_FILE").unwrap_or_else(|_| DEFAULT_GLUE_FILE.to_string());
+        let suppress_file = optional_path_env("SUPPRESS_FILE");
+        let glue_file = optional_path_env("GLUE_FILE");
 
         let egress = env::var("EGRESS")
             .ok()
@@ -147,8 +145,8 @@ impl Config {
         let cfg = Self {
             certstream_url,
             watchlist_file: PathBuf::from(watchlist_file),
-            suppress_file: PathBuf::from(suppress_file),
-            glue_file: PathBuf::from(glue_file),
+            suppress_file,
+            glue_file,
             egress,
             novelty_db,
             novelty_alerts,
@@ -234,6 +232,21 @@ impl Config {
     }
 }
 
+/// `KEY=` empty or unset → no path. Do not default to a shipped filename.
+fn optional_path_env(key: &str) -> PathBuf {
+    match env::var(key) {
+        Ok(raw) => {
+            let s = raw.trim();
+            if s.is_empty() {
+                PathBuf::new()
+            } else {
+                PathBuf::from(s)
+            }
+        }
+        Err(_) => PathBuf::new(),
+    }
+}
+
 /// `STATUS_BIND` unset → default listen addr; empty / `off` / `disabled` → no server.
 fn parse_status_bind() -> Option<String> {
     match env::var("STATUS_BIND") {
@@ -281,8 +294,8 @@ mod tests {
         Config {
             certstream_url: DEFAULT_CERTSTREAM_URL.into(),
             watchlist_file: PathBuf::from("keywords.txt"),
-            suppress_file: PathBuf::from("suppress.txt"),
-            glue_file: PathBuf::from("glue.txt"),
+            suppress_file: PathBuf::new(),
+            glue_file: PathBuf::new(),
             egress: EgressBackend::Stdout,
             novelty_db: default_novelty_db(),
             novelty_alerts: default_novelty_alerts(),
