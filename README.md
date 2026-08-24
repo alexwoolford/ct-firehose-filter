@@ -1,6 +1,6 @@
 # ct-firehose-filter
 
-Edge filter for the Certificate Transparency firehose (CertStream protocol). It drops CT noise in RAM and, in production, runs **in-process A′ novelty** so only first-seen multi-brand alerts land on rotated local `alerts.jsonl` (plus compact `novelty.db`). Local/dev can use `EGRESS=stdout`. Designed to run **standalone on an Oracle Always Free VM** — no cloud queues or object storage.
+Edge filter for the Certificate Transparency firehose (CertStream protocol). It drops unmatched CT in RAM. In production (`EGRESS=novelty`) a watchlist hit is **archived every time** — one JSONL row per **certificate** (solo or multi-brand, including renewals; not a pair table). The same hit becomes an **A′ alert** only if it is a first-seen low-df coalition after a 6h listen. Alerts go to rotated local `alerts.jsonl` (plus compact `novelty.db`). Local/dev can use `EGRESS=stdout`. Designed to run **standalone on an Oracle Always Free VM** — no cloud queues or object storage.
 
 **Mosaic tile (portfolio):** this is personal R&D — one weak signal among many. Multi-brand SANs on CT often reflect shared vendors, subsidiaries, or integration scaffolding. Alone it is **not** actionable alpha; in aggregate with other tiles it can support PE / corp-dev diligence and makes a strong **Neo4j demo** (brands as nodes, co-named certs as relationship edges). Production watchlists stay private; never commit `domains.txt` or `.env.prod`.
 
@@ -14,15 +14,16 @@ Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousan
 
 ```text
 watchlist match
-    ├─→ archive/matches.jsonl     EVERY hit (Amazon, Zendesk, Acme, …)
-    └─→ A′ alerts.jsonl           first-seen scarce×scarce after 6h listen
+    ├─→ archive/matches.jsonl     EVERY hit, per cert, including repeats
+                                  (Amazon-only, hubs, families, …)
+    └─→ A′ alerts.jsonl           first-seen 2–5 low-df brands after 6h listen
                                   (high event-df / packing-hub degree stripped)
 
 offline: mine_hub_customers on the archive
     └─→ "Acme uses Zendesk / AWS / Salesforce"   (T′ / technographics)
 ```
 
-- **A′** = improbable co-occurrence of two *portfolio* brands (diligence trickle).
+- **A′** = first-seen coalition of **2–5** low-df *portfolio* brands (diligence trickle). Repeat coalitions stay quiet.
 - **T′** = portfolio brand co-named with a *platform* (install-base). Mine the archive; do not live-alert every AWS cert.
 
 Cold start is `NOVELTY_CALIBRATE_SECS` (prod default **6h**) plus live event-df / partner-degree. The mute keeps `alerts.jsonl` quiet while solo watchlist hits fill event-df; Amazon saturates in seconds. After unmute, AWS×customer is T′ (`NOVELTY_MAX_BRAND_DF`), not a deal. Unlabeled new SaaS can still look like A′ until live df/degree catches up — mine the archive later. This repo ships **no** name lists.
@@ -33,15 +34,15 @@ Raw emit is still mostly routine cert churn. In-process A′ novelty turns first
 
 ```text
 watchlist match (enqueue)
-    ├─→ archive/matches.jsonl     research: every watchlist hit (SAN list may be compacted)
+    ├─→ archive/matches.jsonl     research: every watchlist hit, including repeats
     └─→ novelty (EGRESS=novelty)
-          ├─ A′  ≥2 low-df brands, first-seen, after burn-in → alerts.jsonl + novelty.db
+          ├─ A′  first-seen 2–5 low-df brands after burn-in → alerts.jsonl + novelty.db
           └─ B′  first (brand, host) — OFF in prod (NOVELTY_TIERS=A)
 ```
 
 | Stream | What it is | On disk (prod) |
 |---|---|---|
-| **Research archive (T′ feed)** | All **enqueued** matches — every watchlist hit | `archive/matches.jsonl` — rotate+gzip; prune oldest **sealed** chunks when the **archive directory** exceeds `ARCHIVE_MAX_TOTAL_BYTES` (default 50 GiB). That is not `df /`. `all_domains` compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32) |
+| **Research archive (T′ feed)** | All **enqueued** matches — every watchlist hit (one row per cert, including renewals) | `archive/matches.jsonl` — rotate+gzip; prune oldest **sealed** chunks when the **archive directory** exceeds `ARCHIVE_MAX_TOTAL_BYTES` (default 50 GiB). That is not `df /`. `all_domains` compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32) |
 | **A′** | First-seen low-df×low-df coalition after listen-first event-df + partner-degree | `alerts.jsonl` (20 GiB prune) + coalition keys in `novelty.db` (kept) |
 | **B′** | First-seen host under a brand (noisy tip churn) | **Not written** unless you opt in `NOVELTY_TIERS=A,B` |
 
