@@ -188,6 +188,7 @@ dependencies = [
  "axum",
  "flate2",
  "futures-util",
+ "libc",
  "pretty_assertions",
  "rusqlite",
  "serde",

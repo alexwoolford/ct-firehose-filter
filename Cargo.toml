@@ -31,6 +31,9 @@ flate2 = "1"
 sha2 = "0.10"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"] }
 

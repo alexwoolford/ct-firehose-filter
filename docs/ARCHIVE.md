@@ -100,12 +100,12 @@ Tagged enum (`tier` discriminant). A′ and B′ keys are **not** written as nul
 | `ARCHIVE_DIR` | `/var/lib/ct-firehose-filter/archive` when `EGRESS=novelty`; empty/`off` disables; unset + stdout → off |
 | `ARCHIVE_MAX_BYTES` | `268435456` (256 MiB) live rotate → gzip seal |
 | `ARCHIVE_MAX_TOTAL_BYTES` | `53687091200` (50 GiB) — delete **oldest** sealed `matches.jsonl.*` / `.gz` until the dir fits; `0` disables prune. **Never** deletes the live file or `config_snapshots/` |
-| `ARCHIVE_DISK_WARN_BYTES` | `107374182400` (100 GiB) — `/status` `archive_disk_warn` also trips at **80%** of `ARCHIVE_MAX_TOTAL_BYTES` |
+| `ARCHIVE_DISK_WARN_BYTES` | `107374182400` (100 GiB) — `/status` `archive_disk_warn` also trips at **80%** of `ARCHIVE_MAX_TOTAL_BYTES`, **or** when the volume cannot hold the remaining cap (`fs_available_bytes` < cap − `archive_dir_bytes`). `ARCHIVE_MAX_TOTAL_BYTES=0` skips the cap-fit clause. |
 | `ARCHIVE_MAX_ALL_DOMAINS` | `32` — compact `all_domains` above this; `0` = store every SAN |
 | `GIT_SHA` | Optional; recorded in snapshots (`unknown` if unset) |
 
 This **is** lossy for research older than the cap. Prune deletes oldest **sealed** chunks under
-the **archive directory** until that dir fits 50 GiB. It does **not** watch host `df`, and it
+the **archive directory** until that dir fits 50 GiB. Prune does **not** watch host `df`, and it
 **never** deletes the live `matches.jsonl` or `config_snapshots/`. If `/` is smaller than 50 GiB
 (typical unexpanded OCI LVM), the **host can fill first**. Grow LVM before relying on the window.
 Copy sealed `matches.jsonl.*.gz` off-box if you need history beyond ~50 GiB compressed. Hub-only
@@ -113,7 +113,7 @@ enqueue after capture-first fills the budget faster (~0.5–3 GB/day compresse
 
 **Always Free boot disk gotcha:** a ~**200 GB** OCI boot volume often ships with only ~**45 GB** in LVM (`ocivolume-root` ≈30 GB on `/` + `ocivolume-oled` ≈15 GB on `/var/oled`). **`/var/oled` is Oracle diagnostics — not spare app capacity.** The rest of the disk may sit as **unallocated free space** while `/` fills with Docker + archive.
 
-After ~10 days of tip capture the archive dir is often **~1–2 GiB** while a 30 GiB root already sits near **~75%+**. `/status` `archive_disk_warn` trips at 80% of the 50 GiB cap (**40 GiB**) or `ARCHIVE_DISK_WARN_BYTES` (default **100 GiB**) — that is **not** a host-disk guard. Watch `df -h /` and `sudo parted /dev/sda print free`.
+After ~10 days of tip capture the archive dir is often **~1–2 GiB** while a 30 GiB root already sits near **~75%+**. `/status` `archive_disk_warn` trips at 80% of the 50 GiB cap (**40 GiB**), at `ARCHIVE_DISK_WARN_BYTES` (default **100 GiB**), **or** when `fs_available_bytes` is less than the remaining cap (so a 50 GiB budget on a ~8 GiB-free root warns immediately). That does **not** auto-delete sealed chunks — grow LVM (below) or copy history off-box. Watch `fs_available_bytes` on `/status` as well as `df -h /` and `sudo parted /dev/sda print free`.
 
 **Grow root into free space (no new block volume):**
 
@@ -144,7 +144,7 @@ Adjust the `mkpart` start to match **your** `print free` boundary (must not over
 ```bash
 # On the VM
 ls -lah /var/lib/ct-firehose-filter/archive/
-curl -s http://127.0.0.1:9100/status | jq '{archive_events_written,archive_bytes_written,archive_dir_bytes,archive_max_total_bytes,archive_disk_warn,config_hash}'
+curl -s http://127.0.0.1:9100/status | jq '{archive_events_written,archive_bytes_written,archive_dir_bytes,archive_max_total_bytes,archive_disk_warn,fs_available_bytes,fs_total_bytes,config_hash}'
 ```
 
 Snapshots run at process start, on watchlist hot-reload, and daily while running.

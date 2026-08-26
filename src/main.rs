@@ -183,16 +183,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         let bytes = arch.total_bytes_on_disk();
+                        let fs = arch.filesystem_usage();
+                        let fs_available_bytes = fs.map(|u| u.available_bytes);
                         if archive_disk_warn(
                             bytes,
                             arch.disk_warn_bytes(),
                             arch.max_total_bytes(),
+                            fs_available_bytes,
                         ) {
                             tracing::warn!(
                                 archive_dir_bytes = bytes,
                                 warn_at = arch.disk_warn_bytes(),
                                 max_total_bytes = arch.max_total_bytes(),
-                                "match research archive disk usage above warn threshold (80% of ARCHIVE_MAX_TOTAL_BYTES or ARCHIVE_DISK_WARN_BYTES)"
+                                fs_available_bytes,
+                                fs_total_bytes = fs.map(|u| u.total_bytes),
+                                "match research archive disk usage above warn threshold (80% of ARCHIVE_MAX_TOTAL_BYTES, ARCHIVE_DISK_WARN_BYTES, or remaining cap does not fit on this volume)"
                             );
                         }
                     }

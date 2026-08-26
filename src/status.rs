@@ -106,6 +106,10 @@ pub struct StatusResponse {
     pub archive_dir_bytes: Option<u64>,
     pub archive_max_total_bytes: Option<u64>,
     pub archive_disk_warn: bool,
+    /// Unprivileged bytes free on the archive volume (`statvfs`). `None` if unknown.
+    pub fs_available_bytes: Option<u64>,
+    /// Volume size for the archive path. `None` if unknown.
+    pub fs_total_bytes: Option<u64>,
     pub config_hash: Option<String>,
     pub snapshot_id: Option<String>,
     /// Operator hint: rising `channel_full` means the filter is falling behind.
@@ -221,24 +225,35 @@ fn build_status(state: &StatusState) -> StatusResponse {
         archive_dir_bytes,
         archive_max_total_bytes,
         archive_disk_warn,
+        fs_available_bytes,
+        fs_total_bytes,
         config_hash,
         snapshot_id,
     ) = match &state.archive {
         Some(arch) => {
             let bytes = arch.total_bytes_on_disk();
             let max_total = arch.max_total_bytes();
-            let warn = crate::archive::archive_disk_warn(bytes, arch.disk_warn_bytes(), max_total);
+            let fs = arch.filesystem_usage();
+            let fs_available = fs.map(|u| u.available_bytes);
+            let warn = crate::archive::archive_disk_warn(
+                bytes,
+                arch.disk_warn_bytes(),
+                max_total,
+                fs_available,
+            );
             let prov = arch.provenance().load();
             (
                 Some(arch.dir().display().to_string()),
                 Some(bytes),
                 Some(max_total),
                 warn,
+                fs_available,
+                fs.map(|u| u.total_bytes),
                 Some(prov.config_hash.clone()),
                 Some(prov.snapshot_id.clone()),
             )
         }
-        None => (None, None, None, false, None, None),
+        None => (None, None, None, false, None, None, None, None),
     };
 
     StatusResponse {
@@ -279,6 +294,8 @@ fn build_status(state: &StatusState) -> StatusResponse {
         archive_dir_bytes,
         archive_max_total_bytes,
         archive_disk_warn,
+        fs_available_bytes,
+        fs_total_bytes,
         config_hash,
         snapshot_id,
         keep_up: keep_up_hint(&snap, frames_per_sec),
@@ -359,6 +376,8 @@ mod tests {
         assert!(body.contains("\"novelty_alerts_a\":3"));
         assert!(body.contains("\"keep_up\""));
         assert!(body.contains("\"product\""));
+        assert!(body.contains("\"fs_available_bytes\":null"));
+        assert!(body.contains("\"fs_total_bytes\":null"));
         shutdown.cancel();
     }
 

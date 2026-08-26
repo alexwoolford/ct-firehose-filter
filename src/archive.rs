@@ -42,14 +42,85 @@ pub const DEFAULT_ARCHIVE_MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024 * 1024;
 /// `ARCHIVE_MAX_ALL_DOMAINS=0` disables compacting.
 pub const DEFAULT_ARCHIVE_MAX_ALL_DOMAINS: usize = 32;
 
-/// True when dir size hits the absolute warn threshold or 80% of the prune cap.
-pub fn archive_disk_warn(bytes: u64, disk_warn_bytes: u64, max_total_bytes: u64) -> bool {
+/// Bytes free / total on the filesystem that holds `path` (`statvfs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilesystemUsage {
+    pub available_bytes: u64,
+    pub total_bytes: u64,
+}
+
+/// Unprivileged free space and volume size for `path`. `None` if `statvfs` fails
+/// or the platform has no equivalent (warn helpers then skip the cap-fit clause).
+pub fn filesystem_usage(path: &Path) -> Option<FilesystemUsage> {
+    filesystem_usage_impl(path)
+}
+
+#[cfg(unix)]
+fn filesystem_usage_impl(path: &Path) -> Option<FilesystemUsage> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut buf = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `c_path` is a valid NUL-terminated path; `buf` is a valid `statvfs`.
+    let rc = unsafe { libc::statvfs(c_path.as_ptr(), buf.as_mut_ptr()) };
+    if rc != 0 {
+        return None;
+    }
+    // SAFETY: `statvfs` returned 0, so `buf` is initialized.
+    let stat = unsafe { buf.assume_init() };
+    let frsize = fs_count_u64(stat.f_frsize)?;
+    if frsize == 0 {
+        return None;
+    }
+    let available = fs_count_u64(stat.f_bavail)?.checked_mul(frsize)?;
+    let total = fs_count_u64(stat.f_blocks)?.checked_mul(frsize)?;
+    Some(FilesystemUsage {
+        available_bytes: available,
+        total_bytes: total,
+    })
+}
+
+/// `statvfs` field widths differ by OS (`u32` vs `u64`).
+#[cfg(unix)]
+fn fs_count_u64<T>(v: T) -> Option<u64>
+where
+    u64: TryFrom<T>,
+{
+    u64::try_from(v).ok()
+}
+
+#[cfg(not(unix))]
+fn filesystem_usage_impl(_path: &Path) -> Option<FilesystemUsage> {
+    None
+}
+
+/// True when dir size hits the absolute warn threshold, 80% of the prune cap,
+/// or (when `max_total_bytes > 0`) the volume cannot hold the remaining cap.
+///
+/// `fs_available_bytes` is injected in tests; `None` skips the cap-fit clause
+/// (unknown `statvfs`). `max_total_bytes == 0` (unlimited prune) also skips it.
+pub fn archive_disk_warn(
+    bytes: u64,
+    disk_warn_bytes: u64,
+    max_total_bytes: u64,
+    fs_available_bytes: Option<u64>,
+) -> bool {
     if bytes >= disk_warn_bytes {
         return true;
     }
-    if max_total_bytes > 0 {
-        let eighty = max_total_bytes.saturating_mul(8) / 10;
-        return bytes >= eighty;
+    if max_total_bytes == 0 {
+        return false;
+    }
+    let eighty = max_total_bytes.saturating_mul(8) / 10;
+    if bytes >= eighty {
+        return true;
+    }
+    if let Some(available) = fs_available_bytes {
+        let remaining_budget = max_total_bytes.saturating_sub(bytes);
+        if available < remaining_budget {
+            return true;
+        }
     }
     false
 }
@@ -341,6 +412,11 @@ impl MatchArchive {
     /// Sum of live + rotated (+ gzip) files under the archive dir (shallow).
     pub fn total_bytes_on_disk(&self) -> u64 {
         dir_byte_total(&self.cfg.dir)
+    }
+
+    /// Filesystem that holds [`Self::dir`] (bind-mount = host volume in Compose).
+    pub fn filesystem_usage(&self) -> Option<FilesystemUsage> {
+        filesystem_usage_impl(self.dir())
     }
 }
 
@@ -843,9 +919,29 @@ mod tests {
 
     #[test]
     fn archive_disk_warn_trips_at_eighty_percent_of_cap() {
-        assert!(!archive_disk_warn(799, u64::MAX, 1_000));
-        assert!(archive_disk_warn(800, u64::MAX, 1_000));
-        assert!(archive_disk_warn(50, 50, 0));
-        assert!(!archive_disk_warn(49, 50, 0));
+        assert!(!archive_disk_warn(799, u64::MAX, 1_000, None));
+        assert!(archive_disk_warn(800, u64::MAX, 1_000, None));
+        assert!(archive_disk_warn(50, 50, 0, None));
+        assert!(!archive_disk_warn(49, 50, 0, None));
+    }
+
+    #[test]
+    fn archive_disk_warn_trips_when_volume_cannot_hold_remaining_cap() {
+        // 100 of 1000 used (under 80%); remaining budget 900.
+        assert!(!archive_disk_warn(100, u64::MAX, 1_000, Some(900)));
+        assert!(archive_disk_warn(100, u64::MAX, 1_000, Some(899)));
+        // Unlimited prune: cap-fit clause is off even if the volume is tiny.
+        assert!(!archive_disk_warn(100, u64::MAX, 0, Some(1)));
+        // Unknown statvfs does not invent a warn.
+        assert!(!archive_disk_warn(100, u64::MAX, 1_000, None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filesystem_usage_reports_temp_dir_volume() {
+        let dir = std::env::temp_dir();
+        let usage = filesystem_usage(&dir).expect("statvfs on temp dir");
+        assert!(usage.total_bytes > 0);
+        assert!(usage.available_bytes <= usage.total_bytes);
     }
 }
