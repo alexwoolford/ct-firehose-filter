@@ -1,5 +1,5 @@
 [Unit]
-Description=CT firehose edge filter (CertStream → watchlist → in-process A′ novelty)
+Description=CT firehose edge filter (CertStream → watchlist → in-process alerts)
 Documentation=https://github.com/alexwoolford/ct-firehose-filter
 After=network-online.target certstream-server-go.service
 Requires=certstream-server-go.service

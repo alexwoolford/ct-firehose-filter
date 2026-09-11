@@ -1,4 +1,4 @@
-//! UTC instants for captured A′ facts (`YYYY-MM-DDTHH:MM:SSZ`).
+//! UTC instants for captured alert facts (`YYYY-MM-DDTHH:MM:SSZ`).
 //! Mute-filter clocks in `coalitions.first_seen` stay INTEGER Unix seconds.
 
 use chrono::{TimeZone, Utc};

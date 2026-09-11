@@ -1,4 +1,4 @@
-//! Shared novelty alert processing (A′ coalitions / optional B′ hosts).
+//! Shared novelty alert processing (tier A coalitions / optional tier B hosts).
 //!
 //! Used by offline `novelty_replay` and in-process `EGRESS=novelty`.
 
@@ -56,7 +56,7 @@ pub struct NoveltyAlert {
     pub event: MatchEvent,
 }
 
-/// Tier-specific payload. Serialized with `tier` tag — A′ and B′ never share null keys.
+/// Tier-specific payload. Serialized with `tier` tag — tier A and B never share null keys.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "tier")]
 pub enum NoveltyKind {
@@ -75,19 +75,19 @@ pub struct NoveltyPolicy {
     pub want_a: bool,
     pub want_b: bool,
     pub skip_routine: bool,
-    /// Max brands in an A′ coalition (inclusive). Larger coalitions are recorded in DB
+    /// Max brands in a tier A coalition (inclusive). Larger coalitions are recorded in DB
     /// but not emitted (shared-vendor SAN junk). Default **5** (drop size ≥ 6).
     pub max_coalition_len: usize,
-    /// Max raw leaf SAN count (inclusive) for A′ emit. Larger certs are recorded in DB
+    /// Max raw leaf SAN count (inclusive) for alert emit. Larger certs are recorded in DB
     /// but not emitted (Firebase/hosting mega-SAN packing). Default **32**. `0` disables.
     pub max_san_count: u32,
-    /// Drop a brand from A′ when its partner degree is ≥ this (learned packing hub).
+    /// Drop a brand from alerts when its partner degree is ≥ this (learned packing hub).
     /// Default **25**. `0` disables the degree gate.
     pub max_partner_degree: u32,
-    /// Drop a brand from A′ when its solo+multi event count is ≥ this (IDF / mega-apex).
+    /// Drop a brand from alerts when its solo+multi event count is ≥ this (IDF / mega-apex).
     /// Default **25**. `0` disables. Amazon warms on this clock, not partner degree.
     pub max_brand_df: u32,
-    /// Mute A′ emit (still record coalitions + degree). Set by the sink from DB burn-in.
+    /// Mute alert emit (still record coalitions + degree). Set by the sink from DB burn-in.
     pub calibrating: bool,
     /// Burn-in wall time (seconds from first DB open). `0` disables the time gate.
     pub calibrate_secs: u64,
@@ -170,13 +170,13 @@ pub struct ProcessStats {
     pub alerts_b: u64,
     /// First-seen coalition key inserted into SQLite (whether or not emitted).
     pub coalitions_inserted: u64,
-    /// A′ coalitions inserted but not emitted (size > max_coalition_len).
+    /// tier A coalitions inserted but not emitted (size > max_coalition_len).
     pub a_oversized_dropped: u64,
-    /// A′ coalitions inserted but not emitted (san_count > max_san_count).
+    /// tier A coalitions inserted but not emitted (san_count > max_san_count).
     pub a_mega_san_dropped: u64,
-    /// First-seen multi-brand left with <2 low-df brands (hub×customer → T′).
+    /// First-seen multi-brand left with <2 low-df brands (hub×customer → archive).
     pub a_high_df_dropped: u64,
-    /// First-seen coalition recorded but A′ muted during burn-in.
+    /// First-seen coalition recorded but alerts muted during burn-in.
     pub a_calibrate_muted: u64,
     /// Learning-feed row (set when `policy.emit_candidates`).
     pub candidate: Option<NoveltyCandidate>,
@@ -220,7 +220,7 @@ pub fn process_match(
         store.record_appearances(&full)?;
     }
 
-    let brands = a_prime_brands(store, &full, ignore, policy)?;
+    let brands = tier_a_brands(store, &full, ignore, policy)?;
     if brands.is_empty() {
         if full.len() >= 2 {
             let ts = event_ts(ev);
@@ -254,7 +254,7 @@ pub fn process_match(
         if is_new {
             stats.coalitions_inserted = 1;
         }
-        // Host rows are only needed for Tier B′. Skipping them on A′-only keeps
+        // Host rows are only needed for tier B. Skipping them on tier-A-only keeps
         // novelty.db from absorbing every brand×host under multi-SAN certs.
         if policy.want_b {
             for brand in &brands {
@@ -273,7 +273,7 @@ pub fn process_match(
                 maybe_candidate(&mut stats, policy, store, &full, &brands, ev, "calibrating")?;
             } else {
                 stats.alerts_a = 1;
-                maybe_candidate(&mut stats, policy, store, &full, &brands, ev, "a_prime")?;
+                maybe_candidate(&mut stats, policy, store, &full, &brands, ev, "tier_a")?;
                 alerts.push(NoveltyAlert {
                     schema_version: MATCH_ARCHIVE_SCHEMA_VERSION,
                     kind: NoveltyKind::A { coalition: brands },
@@ -284,7 +284,7 @@ pub fn process_match(
         return Ok((alerts, stats));
     }
 
-    // One low-df brand left: hub×customer after degree strip (T′ via archive).
+    // One low-df brand left: hub×customer after degree strip (archive).
     if full.len() >= 2 {
         let key = full.join("\u{1f}");
         if store.insert_coalition(&key, ts)? {
@@ -294,7 +294,7 @@ pub fn process_match(
         }
     }
 
-    // Single-brand: nothing to do for A′-only (avoids unbounded hosts growth).
+    // Single-brand: nothing to do for tier-A-only (avoids unbounded hosts growth).
     if !policy.want_b {
         return Ok((alerts, stats));
     }
@@ -408,8 +408,8 @@ fn is_learned_hub(
     Ok(false)
 }
 
-/// Brands that may form an A′ coalition: below event-df and partner-degree caps.
-pub fn a_prime_brands(
+/// Brands that may form a tier A coalition: below event-df and partner-degree caps.
+pub fn tier_a_brands(
     store: &NoveltyStore,
     full: &[String],
     ignore: &HashSet<String>,
@@ -508,7 +508,7 @@ mod tests {
     use crate::novelty::NoveltyStore;
 
     #[test]
-    fn a_prime_fires_once_for_coalition() {
+    fn tier_a_fires_once_for_coalition() {
         let store = NoveltyStore::open(":memory:").unwrap();
         let ignore = HashSet::new();
         let policy = NoveltyPolicy::default();
@@ -529,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn a_prime_drops_oversized_coalitions() {
+    fn tier_a_drops_oversized_coalitions() {
         let store = NoveltyStore::open(":memory:").unwrap();
         let ignore = HashSet::new();
         let policy = NoveltyPolicy {
@@ -552,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn a_prime_drops_mega_san_certs() {
+    fn tier_a_drops_mega_san_certs() {
         let store = NoveltyStore::open(":memory:").unwrap();
         let ignore = HashSet::new();
         let policy = NoveltyPolicy {
@@ -603,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn a_prime_mega_san_falls_back_when_san_count_zero() {
+    fn tier_a_mega_san_falls_back_when_san_count_zero() {
         let store = NoveltyStore::open(":memory:").unwrap();
         let ignore = HashSet::new();
         let policy = NoveltyPolicy {
@@ -640,7 +640,7 @@ mod tests {
     fn a_only_skips_host_table() {
         let store = NoveltyStore::open(":memory:").unwrap();
         let ignore = HashSet::new();
-        let policy = NoveltyPolicy::default(); // A′ only
+        let policy = NoveltyPolicy::default(); // tier A only
         let multi = MatchEvent::new(
             vec!["sso.a.com".into(), "vpn.b.com".into()],
             vec!["a.com".into(), "b.com".into()],
@@ -663,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn a_prime_json_omits_b_fields() {
+    fn tier_a_json_omits_b_fields() {
         let store = NoveltyStore::open(":memory:").unwrap();
         let ignore = HashSet::new();
         let policy = NoveltyPolicy::default();
@@ -682,26 +682,26 @@ mod tests {
         assert!(json.contains(r#""coalition""#), "{json}");
         assert!(
             !json.contains(r#""brand""#),
-            "A′ must not serialize brand: {json}"
+            "tier A must not serialize brand: {json}"
         );
         assert!(
             !json.contains(r#""host""#),
-            "A′ must not serialize host: {json}"
+            "tier A must not serialize host: {json}"
         );
         assert!(
             !json.contains(r#""novel_hosts""#),
-            "A′ must not serialize novel_hosts: {json}"
+            "tier A must not serialize novel_hosts: {json}"
         );
         assert!(
             !json.contains(r#""brand":null"#)
                 && !json.contains(r#""host":null"#)
                 && !json.contains(r#""novel_hosts":null"#),
-            "A′ must not emit null B′ placeholders: {json}"
+            "tier A must not emit null tier B placeholders: {json}"
         );
     }
 
     #[test]
-    fn glue_in_ignore_strips_a_prime_but_filter_keeps_other_brands() {
+    fn glue_in_ignore_strips_tier_a_but_filter_keeps_other_brands() {
         let store = NoveltyStore::open(":memory:").unwrap();
         let ignore: HashSet<String> = ["pagerduty.com".into()].into_iter().collect();
         let policy = NoveltyPolicy::default();
@@ -817,7 +817,7 @@ mod tests {
         let (alerts2, s2) = process_match(&store, &ignore, &policy_live, &ev).unwrap();
         assert!(
             alerts2.is_empty(),
-            "burn-in first-seen must not replay as A′"
+            "burn-in first-seen must not replay as an alert"
         );
         assert_eq!(s2.alerts_a, 0);
         assert_eq!(s2.coalitions_inserted, 0);
@@ -859,7 +859,7 @@ mod tests {
             Some("fp-empty-cold".into()),
         );
         let (alerts, s) = process_match(&store, &ignore, &policy, &ev).unwrap();
-        assert_eq!(s.alerts_a, 1, "without lists, first mixed is A′");
+        assert_eq!(s.alerts_a, 1, "without lists, first mixed is an alert");
         match &alerts[0].kind {
             NoveltyKind::A { coalition } => {
                 assert_eq!(

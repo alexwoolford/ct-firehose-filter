@@ -62,18 +62,18 @@ if [[ "$MODE" == "compressed" ]]; then
   echo "== compressed soak: cold pass =="
   NOVELTY_REQUIRE_DB=0 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \
     cargo run --release --example novelty_replay -- "$JSONL" "$DB" "$ALERTS" | tee "$WORKDIR/soak-cold.txt"
-  A=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/soak-cold.txt")
+  A=$(awk '/alerts_A:/ {print $2}' "$WORKDIR/soak-cold.txt")
   sample cold "$A"
 
   echo "== compressed soak: warm re-pass (expect flat) =="
   : >"$ALERTS"
   NOVELTY_REQUIRE_DB=1 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \
     cargo run --release --example novelty_replay -- "$JSONL" "$DB" "$ALERTS" | tee "$WORKDIR/soak-warm.txt"
-  A=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/soak-warm.txt")
+  A=$(awk '/alerts_A:/ {print $2}' "$WORKDIR/soak-warm.txt")
   sample warm "$A"
 
   echo "== compressed soak: rotate stress (tiny chunk + budget) =="
-  # Fresh DB so A′ fires again and exercises rotation under load.
+  # Fresh DB so alerts fire again and exercises rotation under load.
   rm -f "$DB" "$DB-wal" "$DB-shm" "$ALERTS" "$ALERTS".*
   NOVELTY_ALERTS_MAX_BYTES=4096 NOVELTY_ALERTS_MAX_TOTAL_BYTES=16384 NOVELTY_ALERTS_GZIP=0 \
   NOVELTY_REQUIRE_DB=0 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \

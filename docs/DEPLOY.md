@@ -1,6 +1,6 @@
 # Remote deploy (Compose-first)
 
-Default remote path: **Docker Compose** on Oracle Always Free (Phoenix) with **`EGRESS=novelty`** (in-process A′ → local `novelty.db` + rotated `alerts.jsonl`). Hot-path cost ≈ $0.
+Default remote path: **Docker Compose** on Oracle Always Free (Phoenix) with **`EGRESS=novelty`** (in-process alerts → local `novelty.db` + rotated `alerts.jsonl`). Hot-path cost ≈ $0.
 
 Runtime ranking: **Compose (default) → systemd (advanced / no Docker) → not Kubernetes** on a single Always Free VM.
 
@@ -9,7 +9,7 @@ Runtime ranking: **Compose (default) → systemd (advanced / no Docker) → not 
 | Bar | Required for? | Meaning |
 |---|---|---|
 | **Edge engineering** | Internal go-live | CertStream + full watchlist + quiet `EGRESS=novelty` |
-| **Product feed (internal)** | Analyst trickle | Continuous **A′ novelty** with `NOVELTY_MAX_COALITION=5` → `alerts.jsonl` |
+| **Product feed (internal)** | Analyst trickle | Continuous **alerts** with `NOVELTY_MAX_COALITION=5` → `alerts.jsonl` |
 | **Decision-grade diligence** | PE / corp-dev research | Warm DB + labeled precision + **known-ownership surprise filter** + case studies — see [`SIGNAL.md`](SIGNAL.md#why-this-signal-matters-pe--corp-dev-diligence) |
 
 Product output stays on the VM (`novelty.db` `multi_brand_certs` + `alerts.jsonl`). Collector drain is `_outbox` from that sqlite (see [`CAPTURE.md`](CAPTURE.md)). The JSONL archive is not shipped off-box via the collector.
@@ -20,9 +20,9 @@ Product output stays on the VM (`novelty.db` `multi_brand_certs` + `alerts.jsonl
 |---|---|---|
 | Scale | Filter RSS/throughput fit Always Free | [`SCALE.md`](SCALE.md) — **GO** (~100 MiB, ~1M inspect/s) |
 | Full watchlist | `WATCHLIST_HOST_PATH` → `domains.txt`; prod `EGRESS` refuses len &lt; 100k (`WATCHLIST_MIN_LEN`) | this doc |
-| Glue + size + df | A′ drops coalitions size ≥6; event-df 25; partner-degree 25 | [`SIGNAL.md`](SIGNAL.md#precision-audit-screened-in-vs-screened-out) |
+| Glue + size + df | Alerts drop coalitions size ≥6; event-df 25; partner-degree 25 | [`SIGNAL.md`](SIGNAL.md#precision-audit-screened-in-vs-screened-out) |
 | Quiet ops | Log rotation + `RUST_LOG=warn` + `/status` on `127.0.0.1:9100` + never `EGRESS=stdout` | [`CERTSTREAM.md`](CERTSTREAM.md#quiet-production-checklist) |
-| Novelty A′ | `EGRESS=novelty` + durable `NOVELTY_DB` + budget-capped `alerts.jsonl` | [`SIGNAL.md`](SIGNAL.md) |
+| Novelty alerts | `EGRESS=novelty` + durable `NOVELTY_DB` + budget-capped `alerts.jsonl` | [`SIGNAL.md`](SIGNAL.md) |
 | Decision-grade | Warm ≥7d, precision ≥70%, ownership surprise filter | [`SIGNAL.md`](SIGNAL.md#why-this-signal-matters-pe--corp-dev-diligence) — **not yet** |
 
 ## Prerequisites
@@ -136,7 +136,7 @@ export WATCHLIST_HOST_PATH=/path/to/domains.txt   # full list ≥100k for --comp
 Then:
 
 ```bash
-# 1) Quiet smoke (REQUIRE_DB 0→1, A′-only hosts=0)
+# 1) Quiet smoke (REQUIRE_DB 0→1, tier-A-only hosts=0)
 deploy/scripts/preflight-smoke.sh
 # Optional live Compose with EGRESS=novelty (needs Docker + full domains.txt):
 deploy/scripts/preflight-smoke.sh --compose
@@ -150,9 +150,9 @@ deploy/scripts/preflight-soak.sh --compressed
 deploy/scripts/preflight-failure-drill.sh
 ```
 
-**Disk bounds baked in:** `EGRESS=novelty` + Docker log `10m`×3; A′-only skips `hosts` table growth; `NOVELTY_ALERTS_MAX_BYTES` (256 MiB chunks) + `NOVELTY_ALERTS_MAX_TOTAL_BYTES` (20 GiB) prune oldest; gzip sealed chunks by default; research archive rotate+gzip + `ARCHIVE_MAX_TOTAL_BYTES` (50 GiB) prune of oldest sealed `matches.jsonl.*`.
+**Disk bounds baked in:** `EGRESS=novelty` + Docker log `10m`×3; tier-A-only skips `hosts` table growth; `NOVELTY_ALERTS_MAX_BYTES` (256 MiB chunks) + `NOVELTY_ALERTS_MAX_TOTAL_BYTES` (20 GiB) prune oldest; gzip sealed chunks by default; research archive rotate+gzip + `ARCHIVE_MAX_TOTAL_BYTES` (50 GiB) prune of oldest sealed `matches.jsonl.*`.
 
-**Measured (compressed soak on a 15m tip dump):** cold `novelty.db` ≈ **216 KiB** (1,117 coalitions, **0 hosts**); cold `alerts.jsonl` ≈ **548 KiB** (887 A′); warm re-pass **0** new alerts / flat DB. Full multi-hour live sampler: `preflight-soak.sh --live --hours 4`.
+**Measured (compressed soak on a 15m tip dump):** cold `novelty.db` ≈ **216 KiB** (1,117 coalitions, **0 hosts**); cold `alerts.jsonl` ≈ **548 KiB** (887 alerts); warm re-pass **0** new alerts / flat DB. Full multi-hour live sampler: `preflight-soak.sh --live --hours 4`.
 
 ## Operator checklist (product go-live)
 
@@ -175,7 +175,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=50 filter
-# Filter quiet at warn; A′ lines append to host /var/lib/ct-firehose-filter/alerts.jsonl
+# Filter quiet at warn; alert lines append to host /var/lib/ct-firehose-filter/alerts.jsonl
 ```
 
 After `novelty.db` exists on the host and looks healthy, set `NOVELTY_REQUIRE_DB=1` in `.env.prod` and recreate the filter so wipes fail closed. Backup `novelty.db` with a local file copy or `sqlite3 … '.backup …'` (see [`SIGNAL.md`](SIGNAL.md#shoestring-persistence-survive-restarts)).

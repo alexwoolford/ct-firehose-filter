@@ -1,12 +1,12 @@
 # ct-firehose-filter
 
-Edge filter for the Certificate Transparency firehose (CertStream protocol). It drops unmatched CT in RAM. In production (`EGRESS=novelty`) a watchlist hit is **archived every time** — one JSONL row per **certificate** (solo or multi-brand, including renewals; not a pair table). The same hit becomes an **A′ alert** only if it is a first-seen low-df coalition after a 6h listen. Alerts go to rotated local `alerts.jsonl` (plus compact `novelty.db`). Local/dev can use `EGRESS=stdout`. Designed to run **standalone on an Oracle Always Free VM** — no cloud queues or object storage.
+Edge filter for the Certificate Transparency firehose (CertStream protocol). It drops unmatched CT in RAM. In production (`EGRESS=novelty`) a watchlist hit is **archived every time** — one JSONL row per **certificate** (solo or multi-brand, including renewals; not a pair table). The same hit becomes an **alert** (JSON `tier: "A"`) only if it is a first-seen low-df coalition after a 6h listen. Alerts go to rotated local `alerts.jsonl` (plus compact `novelty.db`). Local/dev can use `EGRESS=stdout`. Designed to run **standalone on an Oracle Always Free VM** — no cloud queues or object storage.
 
-**Capture:** A′ facts live in STRICT `multi_brand_certs` inside `novelty.db` (`capturable-state` v0.1.1). An optional collector drains `_outbox` from that table only. The research archive (T′) stays JSONL on the VM — do not capture ~78 matches/s. Watchlist stays the full ~752k domains. B′ is off; a later C′ (launch-shaped hosts) is not dump-all-B′. Details: [`docs/CAPTURE.md`](docs/CAPTURE.md). Production watchlists stay private; never commit `domains.txt` or `.env.prod`.
+**Capture:** tier A facts live in STRICT `multi_brand_certs` inside `novelty.db` (`capturable-state` v0.1.1). An optional collector drains `_outbox` from that table only. The research archive stays JSONL on the VM — do not capture ~78 matches/s. Watchlist stays the full ~752k domains. Tier B (first-seen hosts) is off. Details: [`docs/CAPTURE.md`](docs/CAPTURE.md). Production watchlists stay private; never commit `domains.txt` or `.env.prod`.
 
 **Production ingest:** run self-hosted CertStream (`0rickyy0/certstream-server-go`) beside this
 Rust filter — keep them separate ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)). Public Calidog
-is best-effort only. **Product go-live** = `EGRESS=novelty` (in-process A′ → local alerts)
+is best-effort only. **Product go-live** = `EGRESS=novelty` (in-process alerts → local JSONL)
 ([`docs/DEPLOY.md`](docs/DEPLOY.md)). Scale: [`docs/SCALE.md`](docs/SCALE.md). Ops:
 [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md), [`docs/DAILY_OPS.md`](docs/DAILY_OPS.md). Signal quality: [`docs/SIGNAL.md`](docs/SIGNAL.md). Capture: [`docs/CAPTURE.md`](docs/CAPTURE.md).
 
@@ -16,39 +16,39 @@ Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousan
 watchlist match
     ├─→ archive/matches.jsonl     EVERY hit, per cert, including repeats
                                   (Amazon-only, hubs, families, …)
-    └─→ A′ alerts.jsonl           first-seen 2–5 low-df brands after 6h listen
-                                  (high event-df / packing-hub degree stripped)
+    └─→ alerts.jsonl              first-seen 2–5 low-df brands after 6h listen
+                                  (tier A; high event-df / packing-hub degree stripped)
 
 offline: mine_hub_customers on the archive
-    └─→ "Acme uses Zendesk / AWS / Salesforce"   (T′ / technographics)
+    └─→ "Acme uses Zendesk / AWS / Salesforce"   (technographics)
 ```
 
-- **A′** = first-seen coalition of **2–5** low-df *portfolio* brands (diligence trickle). Repeat coalitions stay quiet.
-- **T′** = portfolio brand co-named with a *platform* (install-base). Mine the archive; do not live-alert every AWS cert.
+- **Alerts (tier A)** = first-seen coalition of **2–5** low-df *portfolio* brands (diligence trickle). Repeat coalitions stay quiet.
+- **Archive** = every watchlist hit, including platform co-tenancy. Mine it for install-base; do not live-alert every AWS cert.
 
-Cold start is `NOVELTY_CALIBRATE_SECS` (prod default **6h**) plus live event-df / partner-degree. The mute keeps `alerts.jsonl` quiet while solo watchlist hits fill event-df; Amazon saturates in seconds. After unmute, AWS×customer is T′ (`NOVELTY_MAX_BRAND_DF`), not a deal. Unlabeled new SaaS can still look like A′ until live df/degree catches up — mine the archive later. This repo ships **no** name lists.
+Cold start is `NOVELTY_CALIBRATE_SECS` (prod default **6h**) plus live event-df / partner-degree. The mute keeps `alerts.jsonl` quiet while solo watchlist hits fill event-df; Amazon saturates in seconds. After unmute, AWS×customer stays in the archive (`NOVELTY_MAX_BRAND_DF`), not a deal. Unlabeled new SaaS can still look like a tier A alert until live df/degree catches up — mine the archive later. This repo ships **no** name lists.
 
-Raw emit is still mostly routine cert churn. In-process A′ novelty turns first-seen multi-brand coalitions (after event-df / degree strip) into a reviewable trickle; single-brand matches still land in the research archive.
+Raw emit is still mostly routine cert churn. In-process novelty turns first-seen multi-brand coalitions (after event-df / degree strip) into a reviewable trickle; single-brand matches still land in the research archive.
 
-### Three streams (do not confuse A′ / B′ with the archive)
+### Three streams (do not confuse tier A / B with the archive)
 
 ```text
 watchlist match (enqueue)
     ├─→ archive/matches.jsonl     research: every watchlist hit, including repeats
     └─→ novelty (EGRESS=novelty)
-          ├─ A′  first-seen 2–5 low-df brands after burn-in → alerts.jsonl + novelty.db
-          └─ B′  first (brand, host) — OFF in prod (NOVELTY_TIERS=A)
+          ├─ tier A  first-seen 2–5 low-df brands after burn-in → alerts.jsonl + novelty.db
+          └─ tier B  first (brand, host) — OFF in prod (NOVELTY_TIERS=A)
 ```
 
 | Stream | What it is | On disk (prod) |
 |---|---|---|
-| **Research archive (T′ feed)** | All **enqueued** matches — every watchlist hit (one row per cert, including renewals) | `archive/matches.jsonl` — rotate+gzip; prune oldest **sealed** chunks when the **archive directory** exceeds `ARCHIVE_MAX_TOTAL_BYTES` (default 50 GiB). That is not `df /`. `all_domains` compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32) |
-| **A′** | First-seen low-df×low-df coalition after listen-first event-df + partner-degree | `alerts.jsonl` (20 GiB prune) + coalition keys in `novelty.db` (kept) |
-| **B′** | First-seen host under a brand (noisy tip churn) | **Not written** unless you opt in `NOVELTY_TIERS=A,B` |
+| **Research archive** | All **enqueued** matches — every watchlist hit (one row per cert, including renewals) | `archive/matches.jsonl` — rotate+gzip; prune oldest **sealed** chunks when the **archive directory** exceeds `ARCHIVE_MAX_TOTAL_BYTES` (default 50 GiB). That is not `df /`. `all_domains` compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32) |
+| **Alerts (tier A)** | First-seen low-df×low-df coalition after listen-first event-df + partner-degree | `alerts.jsonl` (20 GiB prune) + coalition keys in `novelty.db` (kept) |
+| **Tier B** | First-seen host under a brand (noisy tip churn) | **Not written** unless you opt in `NOVELTY_TIERS=A,B` |
 
-**A′ is a subset of the archive, not a second event log to union.** Every A′ line came from an enqueue that also archived; infra-only, hub-only, and single-brand matches archive without alerting. Join A′ → archive on `event.fingerprint` for SANs (`all_domains` may be a 32-name sample; `san_count` is still raw).
+**Alerts are a subset of the archive, not a second event log to union.** Every alert line came from an enqueue that also archived; infra-only, hub-only, and single-brand matches archive without alerting. Join alerts → archive on `event.fingerprint` for SANs (`all_domains` may be a 32-name sample; `san_count` is still raw).
 
-Details: [`docs/SIGNAL.md`](docs/SIGNAL.md) (A′/B′), [`docs/ARCHIVE.md`](docs/ARCHIVE.md) (research archive).
+Details: [`docs/SIGNAL.md`](docs/SIGNAL.md) (tier A/B), [`docs/ARCHIVE.md`](docs/ARCHIVE.md) (research archive).
 
 This repo is **not** a full entity-resolution product (no SEC CIK/LEI mapping, no pDNS wildcard piercing). Off-box streaming of alerts is the collector `_outbox` path, not a second HTTP API.
 
@@ -63,11 +63,11 @@ For each certificate SAN:
 1. Strip `*.`, lowercase.
 2. Walk every DNS **suffix** of the host against the watchlist HashSet (`s3.amazonaws.com` → check `s3.amazonaws.com`, then `amazonaws.com`, …).
 3. **Enqueue + archive** if any watchlist name remains. `matched_keywords` keeps every implicated eTLD+1 (including Amazon / Zendesk).
-4. **A′ only:** mute `alerts.jsonl` for `NOVELTY_CALIBRATE_SECS` (prod **21600**) while df fills. Then drop brands at or above `NOVELTY_MAX_BRAND_DF` (event count, default 25) **or** `NOVELTY_MAX_PARTNER_DEGREE` (distinct co-named partners, default 25). High-df×customer stays in the archive (T′). `NOVELTY_CANDIDATES` is the optional learning feed.
+4. **Alerts only (tier A):** mute `alerts.jsonl` for `NOVELTY_CALIBRATE_SECS` (prod **21600**) while df fills. Then drop brands at or above `NOVELTY_MAX_BRAND_DF` (event count, default 25) **or** `NOVELTY_MAX_PARTNER_DEGREE` (distinct co-named partners, default 25). High-df×customer stays in the archive. `NOVELTY_CANDIDATES` is the optional learning feed.
 
 Watchlist file entries are normalized with the Public Suffix List when loaded (so `www.google.com` on the list becomes `google.com`).
 
-| SANs | Watchlist hit | Archive | A′ |
+| SANs | Watchlist hit | Archive | Alert (tier A) |
 |---|---|---|---|
 | `sso.fitbit.com` | fitbit.com | yes | no (single brand) |
 | `s3.amazonaws.com` | amazonaws.com | yes | no (solo / high event-df after burn-in) |
@@ -116,7 +116,7 @@ export RUST_LOG=info
 cargo run --release
 ```
 
-## Production: in-process A′ novelty (Oracle VM)
+## Production: in-process novelty alerts (Oracle VM)
 
 **Never use `EGRESS=stdout` in production** — raw match JSONL will fill the disk.
 Prefer the remote checklist in [`docs/DEPLOY.md`](docs/DEPLOY.md). Short form:
@@ -131,7 +131,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.
 Prod overlay sets `EGRESS=novelty`, `RUST_LOG=warn`, `WATCHLIST_MIN_LEN=100000`,
 Docker log rotation (`10m` × 3), and alert chunk/budget caps (256 MiB chunks, 20 GiB total, gzip).
 Output: `/var/lib/ct-firehose-filter/alerts.jsonl` (+ rotated `.gz` siblings after **256 MiB**) and `novelty.db`.
-Warm A′ is typically **tens of alerts/hour** — overnight tens of KB is expected, not a stall.
+Warm tier A is typically **tens of alerts/hour** — overnight tens of KB is expected, not a stall.
 Research archive (default under novelty): `/var/lib/ct-firehose-filter/archive/matches.jsonl` — every enqueued match + full SANs + config snapshots ([`docs/ARCHIVE.md`](docs/ARCHIVE.md)).
 Keep-up + novelty funnel: `curl -s http://127.0.0.1:9100/status | jq` (loopback only — see [`CERTSTREAM.md`](docs/CERTSTREAM.md#keep-up-visibility-are-we-behind-certstream)).
 Full checklist: [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md#quiet-production-checklist).
@@ -139,7 +139,7 @@ Full checklist: [`docs/CERTSTREAM.md`](docs/CERTSTREAM.md#quiet-production-check
 | `EGRESS` | Meaning |
 |---|---|
 | `stdout` (default) | JSONL matches on stdout — **local/dev only** |
-| `novelty` | in-process A′ → local `novelty.db` + rotated `alerts.jsonl` (**prod**) |
+| `novelty` | in-process tier A → local `novelty.db` + rotated `alerts.jsonl` (**prod**) |
 
 `KEYWORDS_FILE` / `KEYWORD_RELOAD_SECS` still work as aliases. Do not commit the 752k domain file into this repo.
 
@@ -166,12 +166,12 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `docs/CERTSTREAM.md` | sidecar + compose + egress runbook |
 | `docs/SIGNAL.md` | 15m tip eval + SNR / novelty alert semantics |
 | `docs/ARCHIVE.md` | research MatchEvent archive for multi-year replay |
-| `docs/CAPTURE.md` | capture A′ only; archive / degree off the bus |
+| `docs/CAPTURE.md` | capture tier A only; archive / degree off the bus |
 | `docs/DAILY_OPS.md` | Compose/systemd restart, collector mounts |
 | `src/archive.rs` | append-only matches.jsonl + config snapshots |
 | `src/novelty.rs` | mute SQLite + STRICT `multi_brand_certs` + announce |
-| `src/novelty_alert.rs` | shared A′/B′ processing |
-| `src/novelty_sink.rs` | in-process A′ egress (`EGRESS=novelty`) |
+| `src/novelty_alert.rs` | shared tier A/B processing |
+| `src/novelty_sink.rs` | in-process alerts egress (`EGRESS=novelty`) |
 | `src/status.rs` | `/healthz` + `/status` JSON (loopback scrape) |
 | `src/alerts_file.rs` | chunk rotate + total byte budget + gzip |
 | `Dockerfile` | multi-stage filter image |
@@ -179,14 +179,14 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `docker-compose.prod.yml` | novelty overlay (Oracle) |
 | `.env.prod.example` | prod compose env template |
 | `deploy/` | cloud-init, systemd, preflight scripts |
-| `examples/audit_aprime.rs` | A′ precision buckets + label sample |
+| `examples/audit_alerts.rs` | tier A precision buckets + label sample |
 | `examples/audit_screened_out.rs` | optional-classifier / high-churn sample audit |
 | `examples/watchlist_scale_bench.rs` | local 1k→752k RSS / ns/op bench |
 | `examples/count_suppress.rs` | eval histogram of `new_with_suppress` drops (not production inspect) |
 | `examples/mine_glue.rs` | dump-driven glue candidate ranking |
 | `examples/mine_hub_customers.rs` | archive hub×customer + unknown high-fan-out apexes |
-| `examples/measure_burnin.rs` | read-only archive: event-df vs partner-degree vs would-be A′ (filter stays up) |
-| `examples/mine_admin.rs` | archive admin/grafana/argocd/oktaadmin hostnames (ASM, not A′) |
+| `examples/measure_burnin.rs` | read-only archive: event-df vs partner-degree vs would-be tier A (filter stays up) |
+| `examples/mine_admin.rs` | archive admin/grafana/argocd/oktaadmin hostnames (ASM, not alerts) |
 | `src/config.rs` | typed env config + fail-fast `validate()` |
 | `src/parse.rs` | partial deserialize of `data.leaf_cert.all_domains` |
 | `src/watchlist.rs` | PSL eTLD+1 HashSet + host-suffix match |

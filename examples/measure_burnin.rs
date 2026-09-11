@@ -1,4 +1,4 @@
-//! Repeatable archive scan: event-df vs partner-degree vs would-be A′ by wall time.
+//! Repeatable archive scan: event-df vs partner-degree vs would-be alerts by wall time.
 //!
 //! Read-only. Does **not** write the archive, novelty.db, or restart the filter.
 //!
@@ -176,7 +176,7 @@ fn fmt_secs(secs: i64) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn maybe_aprime(
+fn maybe_alert(
     remaining: &[String],
     sans: u32,
     max_coalition: usize,
@@ -317,7 +317,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .cloned()
                 .collect();
-            maybe_aprime(
+            maybe_alert(
                 &rem_both,
                 sans,
                 max_coalition,
@@ -327,7 +327,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut a_both,
                 &mut a_both_mega,
             );
-            maybe_aprime(
+            maybe_alert(
                 &rem_deg,
                 sans,
                 max_coalition,
@@ -348,17 +348,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "gates: max_brand_df={max_df} max_partner_degree={max_deg} max_coalition={max_coalition} max_sans={max_sans}"
     );
     println!(
-        "would-be A′ degree-only (no event-df, no seed lists) = {} mega-apex={}",
+        "would-be alerts degree-only (no event-df, no seed lists) = {} mega-apex={}",
         a_deg.len(),
         a_deg_mega
     );
     println!(
-        "would-be A′ event-df+degree (no seed lists) = {} mega-apex={}",
+        "would-be alerts event-df+degree (no seed lists) = {} mega-apex={}",
         a_both.len(),
         a_both_mega
     );
     println!();
-    println!("would-be A′ degree-only interval buckets (plan table):");
+    println!("would-be alerts degree-only interval buckets (plan table):");
     for &(lo, hi, label) in INTERVALS {
         let n = a_deg
             .iter()
@@ -369,7 +369,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .count();
         println!("  {label:<8} {n}");
     }
-    println!("would-be A′ event-df+degree interval buckets:");
+    println!("would-be alerts event-df+degree interval buckets:");
     for &(lo, hi, label) in INTERVALS {
         let n = a_both
             .iter()
@@ -380,7 +380,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .count();
         println!("  {label:<8} {n}");
     }
-    println!("would-be A′ event-df+degree cumulative:");
+    println!("would-be alerts event-df+degree cumulative:");
     for &w in WINDOWS_SECS {
         let n = a_both.iter().filter(|ts| *ts - t0 <= w).count();
         println!("  {:>5}  {n}", fmt_secs(w));

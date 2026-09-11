@@ -2,7 +2,7 @@
 
 This filter is a **daemon** (`Type=simple` / Compose `restart: unless-stopped`). The OS (or Compose) starts it. Do not add an in-process cron.
 
-Operator logs: `tracing` on stderr → `docker compose logs filter` / journald (`SyslogIdentifier=ct-firehose-filter`). Prod `RUST_LOG=warn`. Captured A′ facts live in **`multi_brand_certs`**, not Prometheus.
+Operator logs: `tracing` on stderr → `docker compose logs filter` / journald (`SyslogIdentifier=ct-firehose-filter`). Prod `RUST_LOG=warn`. Captured alert facts live in **`multi_brand_certs`**, not Prometheus.
 
 Keep-up: `curl -s http://127.0.0.1:9100/status | jq`.
 
@@ -14,13 +14,13 @@ Keep-up: `curl -s http://127.0.0.1:9100/status | jq`.
 | `certstream-sidecar` | `certstream-data` volume | recreate sidecar; **do not** `down -v` unless you intend to drop CT indexes |
 | systemd `ct-firehose-filter.service` | same host dir | `sudo systemctl restart ct-firehose-filter.service` |
 
-Never delete `novelty.db` casually (cold A′ flood). Never `EGRESS=stdout` in production.
+Never delete `novelty.db` casually (cold alert flood). Never `EGRESS=stdout` in production.
 
 ## Capture
 
 `multi_brand_certs` in `/var/lib/ct-firehose-filter/novelty.db` is the work sqlite a collector drains via `_outbox`. Research `archive/matches.jsonl` is **not** captured. See [CAPTURE.md](CAPTURE.md).
 
-After a filter rebuild that first creates `multi_brand_certs`, new A′ rows flow incrementally. Historical `alerts.jsonl` is **not** imported. Do not snapshot `brand_degree`.
+After a filter rebuild that first creates `multi_brand_certs`, new alert rows flow incrementally. Historical `alerts.jsonl` is **not** imported. Do not snapshot `brand_degree`.
 
 ```bash
 # systemd user (non-Docker):
@@ -35,7 +35,7 @@ Keep the full ~752k `domains.txt`. Do not shrink it here.
 
 ## Tiers
 
-Leave `NOVELTY_TIERS=A`. Do not enable B′. A later C′ (scarce brand + launch-shaped host) is a new product, not dump-all-hosts.
+Leave `NOVELTY_TIERS=A`. Do not enable tier B.
 
 ## Disk
 

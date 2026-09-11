@@ -1,4 +1,4 @@
-//! In-process A′ novelty egress: MatchEvents → SQLite + rotated alerts.jsonl.
+//! In-process alerts: MatchEvents → SQLite + rotated alerts.jsonl.
 
 use std::collections::HashSet;
 use std::fs;
@@ -23,7 +23,7 @@ struct NoveltyInner {
     candidates: Option<BufWriter<std::fs::File>>,
 }
 
-/// Local durable product sink (SQLite mute + captured A′ + alerts.jsonl).
+/// Local durable product sink (SQLite mute + captured alert + alerts.jsonl).
 /// Raw MatchEvents are not written by this sink; the optional research archive
 /// (`ARCHIVE_DIR`) is a separate writer on the enqueue path and is not captured.
 pub struct NoveltySink {
@@ -126,7 +126,7 @@ impl NoveltySink {
         })
     }
 
-    /// Attach pipeline metrics so A′ funnel counters appear on `/status`.
+    /// Attach pipeline metrics so alert funnel counters appear on `/status`.
     #[must_use]
     pub fn with_metrics(mut self, metrics: Arc<PipelineMetrics>) -> Self {
         self.metrics = Some(metrics);
@@ -208,7 +208,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[tokio::test]
-    async fn a_prime_writes_once_then_silent() {
+    async fn tier_a_writes_once_then_silent() {
         let dir = std::env::temp_dir().join(format!(
             "ct-novelty-sink-{}",
             SystemTime::now()

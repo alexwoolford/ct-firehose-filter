@@ -50,23 +50,23 @@ echo "ok: REQUIRE_DB=1 refuses missing DB"
 NOVELTY_REQUIRE_DB=0 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \
   cargo run --release --example novelty_replay -- "$JSONL" "$DB" "$ALERTS" | tee "$WORKDIR/cold.txt"
 test -f "$DB"
-COLD_A=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/cold.txt")
+COLD_A=$(awk '/alerts_A:/ {print $2}' "$WORKDIR/cold.txt")
 COLD_HOSTS=$(awk '/db_hosts:/ {print $2}' "$WORKDIR/cold.txt")
-echo "cold A′=$COLD_A hosts=$COLD_HOSTS"
+echo "cold alerts=$COLD_A hosts=$COLD_HOSTS"
 if [[ "${COLD_HOSTS:-1}" != "0" ]]; then
-  echo "FAIL: A′-only should not grow hosts table (got $COLD_HOSTS)" >&2
+  echo "FAIL: tier-A-only should not grow hosts table (got $COLD_HOSTS)" >&2
   exit 1
 fi
 
-# Warm re-run with REQUIRE_DB=1 — near-zero new A′
+# Warm re-run with REQUIRE_DB=1 — near-zero new alerts
 cp -f "$ALERTS" "$WORKDIR/alerts.cold.jsonl"
 : > "$ALERTS"
 NOVELTY_REQUIRE_DB=1 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \
   cargo run --release --example novelty_replay -- "$JSONL" "$DB" "$ALERTS" | tee "$WORKDIR/warm.txt"
-WARM_A=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/warm.txt")
-echo "warm re-pass A′=$WARM_A (expect 0)"
+WARM_A=$(awk '/alerts_A:/ {print $2}' "$WORKDIR/warm.txt")
+echo "warm re-pass alerts=$WARM_A (expect 0)"
 if [[ "${WARM_A:-1}" != "0" ]]; then
-  echo "FAIL: warm re-pass should emit 0 A′" >&2
+  echo "FAIL: warm re-pass should emit 0 alerts" >&2
   exit 1
 fi
 

@@ -51,7 +51,7 @@ pub use ingress::{
 pub use metrics::{MetricsSnapshot, PipelineMetrics};
 pub use novelty::{join_fields, NoveltyStore, DB_NAME as CT_FIREHOSE_DB_NAME, FIELD_SEP};
 pub use novelty_alert::{
-    a_prime_brands, dedupe_key, effective_san_count, filter_brands, process_match, unique_keywords,
+    dedupe_key, effective_san_count, filter_brands, process_match, tier_a_brands, unique_keywords,
     NoveltyAlert, NoveltyCandidate, NoveltyKind, NoveltyPolicy, ProcessStats, EMPTY_SHA1_FP,
 };
 pub use novelty_sink::{default_novelty_alerts, default_novelty_db, NoveltySink};

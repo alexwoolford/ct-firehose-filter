@@ -8,10 +8,10 @@
 //! Args: `<jsonl> [optional_glue_classifier] [sample_n]`
 //! Env: `GLUE_FILE` overrides 2nd arg when set.
 //!
-//! Tiers (signal-preserving — does not drop busy brands):
+//! Rank buckets (offline dump only — not the product taxonomy):
 //! - A: ≥2 non-glue matched_keywords (coalition)
 //! - B: first `(keyword, host)` in file order (novelty proxy)
-//! - C: everything else (counted only)
+//! - rest: everything else (counted only)
 
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dedupe_dropped = 0u64;
     let mut tier_a = 0u64;
     let mut tier_b = 0u64;
-    let mut tier_c = 0u64;
+    let mut rest = 0u64;
     let mut seen_dedupe: HashSet<String> = HashSet::new();
     let mut seen_host: HashSet<(String, String)> = HashSet::new();
     let mut coalitions: HashMap<Vec<String>, u64> = HashMap::new();
@@ -104,9 +104,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        // Apex-only with no brand left after glue strip → Tier C
+        // Apex-only with no brand left after glue strip → rest
         if brands.is_empty() {
-            tier_c += 1;
+            rest += 1;
             continue;
         }
         if novel {
@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tier_b_samples.push(ev);
             }
         } else {
-            tier_c += 1;
+            rest += 1;
         }
     }
 
@@ -135,7 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     println!("tier_a_coalition:   {tier_a}");
     println!("tier_b_first_host:  {tier_b}");
-    println!("tier_c_rest:        {tier_c}");
+    println!("rest:               {rest}");
     println!("unique_coalitions:  {unique_coalitions}");
     let kept = tier_a + tier_b;
     let after = total.saturating_sub(dedupe_dropped).max(1);

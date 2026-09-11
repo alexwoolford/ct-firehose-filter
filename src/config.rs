@@ -25,7 +25,7 @@ const DEFAULT_PROD_WATCHLIST_MIN_LEN: usize = 100_000;
 pub enum EgressBackend {
     /// JSONL on stdout — local/dev only (unbounded if captured to disk).
     Stdout,
-    /// In-process A′ novelty → `novelty.db` + rotated `alerts.jsonl` (Oracle prod).
+    /// In-process alerts → `novelty.db` + rotated `alerts.jsonl` (Oracle prod).
     Novelty,
 }
 
@@ -55,9 +55,9 @@ impl FromStr for EgressBackend {
 pub struct Config {
     pub certstream_url: String,
     pub watchlist_file: PathBuf,
-    /// Optional operator A′ ignore (`SUPPRESS_FILE`). Unset/empty = none.
+    /// Optional operator alert ignore (`SUPPRESS_FILE`). Unset/empty = none.
     pub suppress_file: PathBuf,
-    /// Optional operator A′ ignore (`GLUE_FILE`). Unset/empty = none.
+    /// Optional operator alert ignore (`GLUE_FILE`). Unset/empty = none.
     pub glue_file: PathBuf,
     pub egress: EgressBackend,
     pub novelty_db: PathBuf,

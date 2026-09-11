@@ -48,5 +48,5 @@ Notes:
 | Product SNR | Raw emit still ~1M/hr; needs event-df + novelty for humans | **NO-GO for “ready product”** — see [`SIGNAL.md`](SIGNAL.md) |
 
 **Verdict for Oracle Always Free co-located CertStream + filter:** memory/CPU for a 752k
-HashSet watchlist is **GO**. **Product** prod-ready still requires continuous A′ novelty on
+HashSet watchlist is **GO**. **Product** prod-ready still requires continuous alerts on
 the go-live path — see [`DEPLOY.md`](DEPLOY.md).

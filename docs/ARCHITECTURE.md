@@ -51,4 +51,4 @@ is out of scope.
 - Capturing `brand_degree` (derived; mega-apex would flood `_outbox`)
 - Fuzzy / hyphen brand matching inside SAN labels
 - Curating the shared multi-tool domain list
-- Enabling B′ / first-seen hosts as a captured category
+- Enabling tier B / first-seen hosts as a captured category

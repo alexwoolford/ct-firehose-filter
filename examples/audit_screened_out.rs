@@ -150,9 +150,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("verdict_hint:");
     println!("  - fully_ignored multi usually = all brands on suppress/glue (correct drop)");
-    println!("  - high_churn single (kenvue/bms/…) is routine infra; keep out of A′");
+    println!("  - high_churn single (kenvue/bms/…) is routine infra; keep out of alerts");
     println!(
-        "  - scarce-brand B′ (quiet brand + unusual host) is v2, rate-limited — not dump-all-B′"
+        "  - scarce-brand tier B (quiet brand + unusual host) is v2, rate-limited — not dump-all hosts"
     );
     Ok(())
 }

@@ -1,42 +1,42 @@
 # Research archive (commercial / multi-year backtest)
 
-Product path (`EGRESS=novelty`) remains a quiet **A′ diligence trickle**. Separately, the
+Product path (`EGRESS=novelty`) remains a quiet **alert trickle**. Separately, the
 filter can append a **MatchEvent research archive** so product filters stay reversible
 for offline research 3–5 years from now.
 
 ## Why
 
-A′ alone cannot answer “what would the feed look like under different SAN caps?”
+Alerts alone cannot answer “what would the feed look like under different SAN caps?”
 Renewals, single-brand matches, and oversize/mega-SAN decisions leave little or no
 payload on disk. Every week without an archive is a week you cannot replay.
 
 Prod cold start is `NOVELTY_CALIBRATE_SECS` (prod **6h**) plus live event-df /
 partner-degree. Hub-only leaves still enqueue so platforms (Zendesk/Shopify/AWS-class
 tenants) can be mined later. Partner-degree does **not** replace Amazon (solo hub
-leaves never raise partner count). Technographics live in the archive, not in A′.
+leaves never raise partner count). Technographics live in the archive, not in alerts.
 
-## What lands where (not A′ / B′ novelty tiers)
+## What lands where (not tier A / B novelty tiers)
 
-Do **not** confuse these with novelty **A′ / B′** alerts ([`SIGNAL.md`](SIGNAL.md#three-streams-a--b-vs-research-archive)).
+Do **not** confuse these with novelty **tier A / B** alerts ([`SIGNAL.md`](SIGNAL.md#three-streams-tier-a--b-vs-research-archive)).
 
 | Stream | Path | Role |
 |---|---|---|
-| **Product (A′)** | `novelty.db` + `alerts.jsonl` | First-seen low-df×low-df after listen-first event-df + partner-degree |
-| **Research archive** | `ARCHIVE_DIR/matches.jsonl` (+ `.*.gz`) | Every **enqueued** match (includes single-brand; **not** a B′ feed). `all_domains` compact at 32 names by default (`ARCHIVE_MAX_ALL_DOMAINS=0` stores every SAN) |
+| **Product (alerts)** | `novelty.db` + `alerts.jsonl` | First-seen low-df×low-df after listen-first event-df + partner-degree |
+| **Research archive** | `ARCHIVE_DIR/matches.jsonl` (+ `.*.gz`) | Every **enqueued** match (includes single-brand; **not** a tier B feed). `all_domains` compact at 32 names by default (`ARCHIVE_MAX_ALL_DOMAINS=0` stores every SAN) |
 | **Config provenance** | `ARCHIVE_DIR/config_snapshots/<id>/` | Watchlist copy + optional ignore-file copies + `meta.json` |
 
 ### Platform hubs (penetration research)
 
-Screening a hub out of A′ (PagerDuty, Blackboard, Files.com, …) is **not** “delete
+Screening a hub out of alerts (PagerDuty, Blackboard, Files.com, …) is **not** “delete
 customer evidence.” Live event-df / partner-degree keep high-fan-out platforms out
-of the **A′ diligence** feed. Inspect/archive keep every watchlist hit.
+of the **alert** feed. Inspect/archive keep every watchlist hit.
 
 | Path | High-df / packing hub |
 |---|---|
-| **A′** | Usually no multi-brand equity-style alert |
+| **Alerts (tier A)** | Usually no multi-brand equity-style alert |
 | **Archive** | Hub-only, mixed, and infra-only leaves enqueue. **`all_domains` still lists** hub/infra SANs. Oversized SAN lists are compacted (`ARCHIVE_MAX_ALL_DOMAINS`, default 32); `san_count` remains the raw leaf size. |
 
-`matched_keywords` on archive lines are **pre-A′** (full watchlist implication), so the hub remains when it was a watchlist hit. Recover hub×customer edges offline:
+`matched_keywords` on archive lines are **pre-alert** (full watchlist implication), so the hub remains when it was a watchlist hit. Recover hub×customer edges offline:
 
 ```bash
 cargo run --release --example mine_hub_customers -- \
@@ -49,11 +49,11 @@ Spot-check on ~2.1M recent archive rows (live `matches.jsonl` + 3 sealed gz): mi
 2. Scan `all_domains` for other eTLD+1s on the same cert.
 3. Rank unknown high-fan-out apexes the same way. Ingest already kept them.
 
-That offline slice is a **second product** (technographic / install-base mosaic), not M&A A′. Do not un-screen hubs into A′ to “keep” customers — mine the archive instead.
+That offline slice is a **second product** (technographic / install-base mosaic), not M&A alerts. Do not un-screen hubs into alerts to “keep” customers — mine the archive instead.
 
-**Limit:** inspect no longer drops. Rolling 50 GiB archive-dir prune is the only loss (time), plus SAN compact at 32. ExactTarget-scale packs still archive with sampled `all_domains`. See cold-start / posterior platform mining in [`SIGNAL.md`](SIGNAL.md#what-a-actually-is-streams-honesty).
+**Limit:** inspect no longer drops. Rolling 50 GiB archive-dir prune is the only loss (time), plus SAN compact at 32. ExactTarget-scale packs still archive with sampled `all_domains`. See cold-start / posterior platform mining in [`SIGNAL.md`](SIGNAL.md#what-alerts-actually-are-streams-honesty).
 
-### Infosec extract (not A′)
+### Infosec extract (not alerts)
 
 Admin / Grafana / Argo CD / Okta-admin hostnames are watchlist-scoped **attack surface**, not investor alpha:
 
@@ -81,14 +81,14 @@ Each JSONL line:
 
 ### `alerts.jsonl` (`NoveltyAlert`) — product lines
 
-Tagged enum (`tier` discriminant). A′ and B′ keys are **not** written as null on the other tier.
+Tagged enum (`tier` discriminant). tier A and B keys are **not** written as null on the other tier.
 
 | Field | Meaning |
 |---|---|
 | `schema_version` | `1` — same constant as archive; **always written by current builds**. Older alert lines (pre-archive cutover) may omit it |
 | `tier` | `"A"` (prod) or `"B"` (opt-in) |
-| `coalition` | A′ only — sorted brands |
-| `brand` / `host` / `novel_hosts` | B′ only |
+| `coalition` | tier A only — sorted brands |
+| `brand` / `host` / `novel_hosts` | tier B only |
 | `event` | Nested `MatchEvent` (matched hits, `fingerprint`, `seen`, `source`, `san_count`) — **not** full `all_domains` |
 
 **Join:** `event.fingerprint` ↔ archive `fingerprint` (and crt.sh SHA-1). No separate `event_id`.
@@ -152,8 +152,8 @@ Snapshots run at process start, on watchlist hot-reload, and daily while running
 ## Non-goals
 
 - Not a CT / PEM warehouse
-- Not the customer-facing alert API (that stays A′)
-- Not Tier B′ host churn as the research series
+- Not the customer-facing alert API (that stays alerts)
+- Not tier B host churn as the research series
 - Not a substitute for CertStream completeness (still no durable CT cursor)
 
-Replay future A′ logic offline from archive JSONL + the matching `config_snapshots/<id>/`.
+Replay future alert logic offline from archive JSONL + the matching `config_snapshots/<id>/`.

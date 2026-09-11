@@ -1,4 +1,4 @@
-//! Product funnel: inspect → archive every watchlist hit → A′ after calibrate / event-df.
+//! Product funnel: inspect → archive every watchlist hit → tier A after calibrate / event-df.
 
 use std::collections::HashSet;
 use std::fs;
@@ -66,7 +66,7 @@ struct Case {
     sans: &'static [&'static str],
     expect_suppressed: bool,
     expect_implicated: &'static [&'static str],
-    /// `None` = no A′ alert. `Some` = exact coalition (sorted).
+    /// `None` = no alert. `Some` = exact coalition (sorted).
     expect_coalition: Option<&'static [&'static str]>,
     replay: bool,
 }
@@ -192,7 +192,11 @@ fn inspect_archive_novelty_funnel() {
         let (alerts, stats) = process_match(&store, &ignore, &policy, &ev).unwrap();
         match case.expect_coalition {
             None => {
-                assert!(alerts.is_empty(), "{}: no A′ (got {alerts:?})", case.name);
+                assert!(
+                    alerts.is_empty(),
+                    "{}: no alert (got {alerts:?})",
+                    case.name
+                );
                 if case.expect_implicated == ["pagerduty.com"]
                     || case.expect_implicated == ["zendesk.com"]
                     || case.expect_implicated == ["amazonaws.com"]
@@ -205,13 +209,13 @@ fn inspect_archive_novelty_funnel() {
                 }
             }
             Some(want) => {
-                assert_eq!(alerts.len(), 1, "{}: one A′", case.name);
+                assert_eq!(alerts.len(), 1, "{}: one alert", case.name);
                 assert_eq!(stats.alerts_a, 1, "{}: alerts_a", case.name);
                 match &alerts[0].kind {
                     NoveltyKind::A { coalition } => {
                         assert_eq!(coalition, want, "{}: coalition", case.name);
                     }
-                    other => panic!("{}: expected A′ got {other:?}", case.name),
+                    other => panic!("{}: expected alert got {other:?}", case.name),
                 }
             }
         }
@@ -253,7 +257,7 @@ fn listen_first_empty_ignore_degree_and_calibrate() {
     let (alerts, stats) = process_match(&store, &ignore, &policy, &aws_acme).unwrap();
     assert!(
         alerts.is_empty(),
-        "high-df Amazon is T′, not A′: {alerts:?}"
+        "high-df Amazon is archive, not alerts: {alerts:?}"
     );
     assert_eq!(stats.alerts_a, 0);
     assert_eq!(stats.a_high_df_dropped, 1);
@@ -270,7 +274,7 @@ fn listen_first_empty_ignore_degree_and_calibrate() {
                 &["acme.com".to_string(), "widget.com".to_string()]
             );
         }
-        other => panic!("expected A′ got {other:?}"),
+        other => panic!("expected alert got {other:?}"),
     }
 
     let store2 = NoveltyStore::open(":memory:").unwrap();
@@ -280,7 +284,7 @@ fn listen_first_empty_ignore_degree_and_calibrate() {
         ..NoveltyPolicy::default()
     };
     let (alerts, stats) = process_match(&store2, &ignore, &cal, &scarce).unwrap();
-    assert!(alerts.is_empty(), "burn-in must not page A′");
+    assert!(alerts.is_empty(), "burn-in must not page alerts");
     assert_eq!(stats.a_calibrate_muted, 1);
     assert_eq!(stats.coalitions_inserted, 1);
     let live = NoveltyPolicy::default();
@@ -347,7 +351,7 @@ fn seed_lists_optional_once_event_df_is_warm() {
     let (alerts, stats) = process_match(&cold, &empty, &policy, &aws_acme).unwrap();
     assert_eq!(
         stats.alerts_a, 1,
-        "empty ignore + cold DB pages the first AWS×customer as A′"
+        "empty ignore + cold DB pages the first AWS×customer as an alert"
     );
     assert_eq!(alerts.len(), 1);
 

@@ -49,7 +49,7 @@ impl InspectOutcome {
 /// scope — they false-positive heavily on large lists.
 ///
 /// Optional **suppress** names exist only on [`new_with_suppress`]. Production
-/// inspect is [`DomainWatchlist::new`]: every watchlist hit enqueues. A′ ignore
+/// inspect is [`DomainWatchlist::new`]: every watchlist hit enqueues. alert ignore
 /// (event-df / partner-degree, plus optional operator files) lives in NoveltySink.
 pub struct DomainWatchlist {
     names: HashSet<String>,

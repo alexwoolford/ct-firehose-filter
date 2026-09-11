@@ -18,7 +18,7 @@ pub struct PipelineMetrics {
     pub reconnects: AtomicU64,
     pub batches_sent: AtomicU64,
     pub egress_retries: AtomicU64,
-    /// A′ lines written this process (`EGRESS=novelty`).
+    /// Alert lines written this process (`EGRESS=novelty`).
     pub novelty_alerts_a: AtomicU64,
     pub novelty_alerts_b: AtomicU64,
     pub novelty_oversized_dropped: AtomicU64,
@@ -26,7 +26,7 @@ pub struct PipelineMetrics {
     pub novelty_fully_ignored: AtomicU64,
     /// First-seen coalition keys inserted into `novelty.db` this process.
     pub novelty_coalitions_inserted: AtomicU64,
-    /// First-seen hub×customer after degree strip (T′, not A′).
+    /// First-seen hub×customer after degree strip (archive, not alerts).
     pub novelty_high_df_dropped: AtomicU64,
     /// First-seen coalitions muted during burn-in.
     pub novelty_calibrate_muted: AtomicU64,

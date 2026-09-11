@@ -1,6 +1,6 @@
 //! Research archive for commercial / multi-year backtests.
 //!
-//! Product path (`EGRESS=novelty`) stays a quiet A′ trickle. This module appends
+//! Product path (`EGRESS=novelty`) stays a quiet alert trickle. This module appends
 //! every **enqueued** MatchEvent (post watchlist, pre novelty gates) with
 //! full leaf SAN lists and a config hash so filters remain reversible offline.
 //!

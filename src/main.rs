@@ -15,7 +15,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn build_watchlist(watch_path: &std::path::Path) -> Result<DomainWatchlist, StartupError> {
     let names = load_domain_file(watch_path).map_err(|e| StartupError::Watchlist(e.to_string()))?;
-    // Capture every watchlist hit. A′ screens in NoveltySink (event-df / degree).
+    // Capture every watchlist hit. alerts screen in NoveltySink (event-df / degree).
     Ok(DomainWatchlist::new(&names))
 }
 
@@ -272,7 +272,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_brand_df = policy.max_brand_df,
                 calibrate_secs = policy.calibrate_secs,
                 calibrate_events = policy.calibrate_events,
-                "EGRESS=novelty — A′ alerts to local rotated JSONL (listen-first event-df)"
+                "EGRESS=novelty — alerts to local rotated JSONL (listen-first event-df)"
             );
             run_pipeline_with_archive(
                 config.certstream_url,

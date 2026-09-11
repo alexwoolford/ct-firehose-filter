@@ -1,4 +1,4 @@
-# Production overlay: in-process A′ novelty → rotated alerts.jsonl (Oracle VM only).
+# Production overlay: in-process alerts → rotated alerts.jsonl (Oracle VM only).
 #
 # Preferred (see docs/DEPLOY.md):
 #   cp .env.prod.example .env.prod   # set WATCHLIST_HOST_PATH (≥100k); NOVELTY_REQUIRE_DB / budget via env
@@ -39,9 +39,9 @@ services:
       NOVELTY_REQUIRE_DB: ${NOVELTY_REQUIRE_DB:-0}
       NOVELTY_TIERS: ${NOVELTY_TIERS:-A}
       NOVELTY_MAX_COALITION: ${NOVELTY_MAX_COALITION:-5}
-      # Partner-degree cap for A′ (learned packing hubs).
+      # Partner-degree cap for alerts (learned packing hubs).
       NOVELTY_MAX_PARTNER_DEGREE: ${NOVELTY_MAX_PARTNER_DEGREE:-25}
-      # Event-df cap for A′ (solo+multi appearances). Mega-apex warms here, not partner degree.
+      # Event-df cap for alerts (solo+multi appearances). Mega-apex warms here, not partner degree.
       NOVELTY_MAX_BRAND_DF: ${NOVELTY_MAX_BRAND_DF:-25}
       # Listen-first: mute alerts.jsonl until secs AND/OR multi-brand events (0 = off).
       # Product default 6h: empty novelty.db must not page AWS×customer.

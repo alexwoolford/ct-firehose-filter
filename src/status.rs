@@ -96,7 +96,7 @@ pub struct StatusResponse {
     pub novelty_high_df_dropped: u64,
     pub novelty_calibrate_muted: u64,
     pub novelty_calibrating: bool,
-    /// Process-lifetime A′ emit rate (warm tip is typically tens/hour).
+    /// Process-lifetime alert emit rate (warm tip is typically tens/hour).
     pub novelty_alerts_per_hour: f64,
     pub alerts_file_bytes: Option<u64>,
     pub alerts_file_lines: Option<u64>,
@@ -114,7 +114,7 @@ pub struct StatusResponse {
     pub snapshot_id: Option<String>,
     /// Operator hint: rising `channel_full` means the filter is falling behind.
     pub keep_up: KeepUpHint,
-    /// Product funnel hint (quiet A′ file is often healthy).
+    /// Product funnel hint (quiet alert file is often healthy).
     pub product: ProductHint,
 }
 
@@ -159,7 +159,7 @@ fn product_hint(snap: &MetricsSnapshot, uptime_secs: f64, egress: &str) -> Produ
     if snap.novelty_calibrating > 0 {
         return ProductHint {
             ok: true,
-            detail: "calibrating — A′ muted; archive + novelty.db still listen",
+            detail: "calibrating — alerts muted; archive + novelty.db still listen",
         };
     }
     if uptime_secs > 3600.0
@@ -170,12 +170,12 @@ fn product_hint(snap: &MetricsSnapshot, uptime_secs: f64, egress: &str) -> Produ
         return ProductHint {
             ok: false,
             detail:
-                "no A′ inserts after 1h with matches — check novelty DB / watchlist / calibrate",
+                "no alert inserts after 1h with matches — check novelty DB / watchlist / calibrate",
         };
     }
     ProductHint {
         ok: true,
-        detail: "warm A′ is tens/hour; tiny alerts.jsonl is expected until 256MiB rotate",
+        detail: "warm alerts is tens/hour; tiny alerts.jsonl is expected until 256MiB rotate",
     }
 }
 

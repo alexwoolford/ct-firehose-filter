@@ -1,8 +1,8 @@
-//! Audit A′ novelty alerts for precision buckets and stratified human-label samples.
+//! Audit alerts for precision buckets and stratified human-label samples.
 //!
 //! ```bash
-//! cargo run --release --example audit_aprime -- \
-//!   /tmp/ct-novelty-glue-alerts.jsonl /tmp/aprime-label-sample.jsonl
+//! cargo run --release --example audit_alerts -- \
+//!   /tmp/ct-novelty-glue-alerts.jsonl /tmp/alert-label-sample.jsonl
 //! ```
 //!
 //! Args: `<alerts_jsonl> [label_sample_out]`
@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| "/tmp/ct-novelty-glue-alerts.jsonl".into());
     let sample_out = env::args()
         .nth(2)
-        .unwrap_or_else(|| "/tmp/aprime-label-sample.jsonl".into());
+        .unwrap_or_else(|| "/tmp/alert-label-sample.jsonl".into());
     let mega_min: usize = env::var("MEGA_MIN")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let a: AlertIn = serde_json::from_str(&line)?;
         let tier = a.tier.as_deref().unwrap_or("");
-        if tier != "A" && tier != "A'" {
+        if tier != "A" {
             non_a += 1;
             continue;
         }
@@ -102,9 +102,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("=== audit_aprime ===");
+    println!("=== audit_alerts ===");
     println!("alerts_file:     {alerts_path}");
-    println!("a_prime_total:   {total}");
+    println!("alerts_total:    {total}");
     println!("non_a_skipped:   {non_a}");
     println!("pairs (size=2):  {}", pairs.len());
     println!("small (3-5):     {}", small.len());
@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("mega_share:      {mega_share:.1}%  (mid+mega size>=6 share={mid_mega_share:.1}%)");
     println!();
-    println!("recommendation: drop A′ when coalition_size >= 6 (keeps pairs+small).");
+    println!("recommendation: drop alerts when coalition_size >= 6 (keeps pairs+small).");
 
     // Stratified label sample
     let mut out = BufWriter::new(File::create(&sample_out)?);

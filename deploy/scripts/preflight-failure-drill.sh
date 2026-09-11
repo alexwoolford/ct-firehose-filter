@@ -51,8 +51,8 @@ rm -f "$DB" "$DB-wal" "$DB-shm" "$ALERTS" "$ALERTS".* "$SNAP"
 echo "== 1) warm DB on first half (simulates running filter) =="
 NOVELTY_REQUIRE_DB=0 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \
   cargo run --release --example novelty_replay -- "$HALF1" "$DB" "$ALERTS" | tee "$WORKDIR/drill-h1.txt"
-A1=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/drill-h1.txt")
-echo "half1 A′=$A1"
+A1=$(awk '/alerts_A:/ {print $2}' "$WORKDIR/drill-h1.txt")
+echo "half1 alerts=$A1"
 
 echo "== 2) snapshot (process 'stopped'; state durable) =="
 if command -v sqlite3 >/dev/null; then
@@ -80,7 +80,7 @@ test -f "$DB"
 echo "== 5) REQUIRE_DB=1 + second half (catch-up; should NOT re-flood half1 keys) =="
 NOVELTY_REQUIRE_DB=1 NOVELTY_DB="$DB" NOVELTY_ALERTS="$ALERTS" NOVELTY_TIERS=A \
   cargo run --release --example novelty_replay -- "$HALF2" "$DB" "$ALERTS" | tee "$WORKDIR/drill-h2.txt"
-A2=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/drill-h2.txt")
+A2=$(awk '/alerts_A:/ {print $2}' "$WORKDIR/drill-h2.txt")
 
 echo "== 6) control: cold start on half2 alone (upper bound) =="
 COLD_DB="$WORKDIR/drill-cold-h2.db"
@@ -88,9 +88,9 @@ COLD_ALERTS="$WORKDIR/drill-cold-h2-alerts.jsonl"
 rm -f "$COLD_DB" "$COLD_DB-wal" "$COLD_DB-shm" "$COLD_ALERTS"
 NOVELTY_REQUIRE_DB=0 NOVELTY_DB="$COLD_DB" NOVELTY_ALERTS="$COLD_ALERTS" NOVELTY_TIERS=A \
   cargo run --release --example novelty_replay -- "$HALF2" "$COLD_DB" "$COLD_ALERTS" | tee "$WORKDIR/drill-cold-h2.txt"
-A2_COLD=$(awk '/alerts_A_prime:/ {print $2}' "$WORKDIR/drill-cold-h2.txt")
+A2_COLD=$(awk '/alerts_A:/ {print $2}' "$WORKDIR/drill-cold-h2.txt")
 
-echo "restored catch-up A′=$A2  vs cold half2 A′=$A2_COLD"
+echo "restored catch-up alerts=$A2  vs cold half2 alerts=$A2_COLD"
 # Restored path should emit ≤ cold (usually much less if halves share coalitions).
 if [[ "$A2" -gt "$A2_COLD" ]]; then
   echo "FAIL: restored catch-up emitted more than cold half2 ($A2 > $A2_COLD)" >&2
@@ -107,4 +107,4 @@ set -e
 [[ $rc -ne 0 ]]
 grep -q "NOVELTY_REQUIRE_DB=1" "$WORKDIR/drill-missing.txt"
 
-echo "PASS: failure drill (restored A′=$A2 ≤ cold A′=$A2_COLD)"
+echo "PASS: failure drill (restored alerts=$A2 ≤ cold alerts=$A2_COLD)"

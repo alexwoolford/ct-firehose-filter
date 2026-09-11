@@ -36,7 +36,7 @@ Matched batches go through `EgressSink`. The binary selects a backend with `EGRE
 | `EGRESS` | Behavior | Needs |
 |---|---|---|
 | `stdout` (default) | JSONL match events on stdout | nothing |
-| `novelty` | in-process A′ → `novelty.db` + rotated `alerts.jsonl` | `NOVELTY_DB` / `NOVELTY_ALERTS` (defaults under `/var/lib/...`) |
+| `novelty` | in-process alerts → `novelty.db` + rotated `alerts.jsonl` | `NOVELTY_DB` / `NOVELTY_ALERTS` (defaults under `/var/lib/...`) |
 
 Production path is **`EGRESS=novelty`** on Oracle Always Free. Mosaic capture is `multi_brand_certs` in `novelty.db` ([`CAPTURE.md`](CAPTURE.md)).
 
@@ -101,14 +101,14 @@ Never use `EGRESS=stdout` in production (JSONL matches will fill the disk).
 
 ## Quiet production checklist
 
-Goal: firehose → in-process A′ trickle to rotated `alerts.jsonl`, without filling the disk.
+Goal: firehose → in-process alerts trickle to rotated `alerts.jsonl`, without filling the disk.
 
 1. **Seed index** on first boot; keep the `certstream-data` volume (avoid casual `down -v`).
 2. **`EGRESS=novelty` only** in shoestring production — not `stdout`.
 3. **Filter logs:** `RUST_LOG=warn` in prod (reconnect / backpressure / failures). Progress counters are `info` (visible when `RUST_LOG=info`); on Oracle use **`curl http://127.0.0.1:9100/status`** (Compose publishes loopback only).
 4. **Rotate container logs.** Compose sets `json-file` `max-size: 10m` / `max-file: 3` on all services.
-5. **Novelty disk bounds:** A′-only skips `hosts` rows; chunk rotate + **20 GiB** total budget + gzip (`NOVELTY_ALERTS_*`).
-6. **Research archive:** default `ARCHIVE_DIR=/var/lib/ct-firehose-filter/archive` under novelty — rotate+gzip; prune oldest sealed `matches.jsonl.*` at `ARCHIVE_MAX_TOTAL_BYTES` (default **50 GiB**; `0` = unlimited). Hub-only leaves still enqueue (A′ strip only). Oversized SAN lists compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32). `/status` `archive_disk_warn` trips at 80% of the cap, `ARCHIVE_DISK_WARN_BYTES` (100 GiB), or when the volume cannot hold the remaining cap (`fs_available_bytes`). Prune still does **not** follow host `df`. History past the cap is **lossy**; off-box copy sealed `*.gz` if you care (see [`ARCHIVE.md`](ARCHIVE.md)). Disable with `ARCHIVE_DIR=off` only if you accept irreversible filters.
+5. **Novelty disk bounds:** tier-A-only skips `hosts` rows; chunk rotate + **20 GiB** total budget + gzip (`NOVELTY_ALERTS_*`).
+6. **Research archive:** default `ARCHIVE_DIR=/var/lib/ct-firehose-filter/archive` under novelty — rotate+gzip; prune oldest sealed `matches.jsonl.*` at `ARCHIVE_MAX_TOTAL_BYTES` (default **50 GiB**; `0` = unlimited). Hub-only leaves still enqueue (alert strip only). Oversized SAN lists compact at `ARCHIVE_MAX_ALL_DOMAINS` (default 32). `/status` `archive_disk_warn` trips at 80% of the cap, `ARCHIVE_DISK_WARN_BYTES` (100 GiB), or when the volume cannot hold the remaining cap (`fs_available_bytes`). Prune still does **not** follow host `df`. History past the cap is **lossy**; off-box copy sealed `*.gz` if you care (see [`ARCHIVE.md`](ARCHIVE.md)). Disable with `ARCHIVE_DIR=off` only if you accept irreversible filters.
 7. **systemd/journald:** configure `SystemMaxUse=` / rate limits if not using Docker.
 8. **Resources:** ~100 MiB RSS for a 752k watchlist HashSet (measured — [`SCALE.md`](SCALE.md)) + ~0.5–2 GB for CertStream; CPU follows CT rate;
    durable disk ≈ rotated logs + compact `novelty.db` + budget-capped alerts + **research archive** (+ tiny `ct_index.json`).
@@ -133,7 +133,7 @@ curl -s http://127.0.0.1:9100/status | jq .
 
 Bind inside the container is `STATUS_BIND=0.0.0.0:9100` (required for port publish). Host publish is `127.0.0.1:9100:9100`. Set `STATUS_BIND=` empty / `off` to disable the server (e.g. local stdout smokes). Do **not** open `9100` on the Oracle NSG.
 
-**Quiet `alerts.jsonl` is usually healthy.** Warm Tier A′ is typically **tens of alerts per hour** (overnight tens of KB is normal). One live file until **256 MiB** rotate (`NOVELTY_ALERTS_MAX_BYTES`); check `ls /var/lib/ct-firehose-filter/alerts*` before assuming data loss. Tiny size alone ≠ stall — use `/status`:
+**Quiet `alerts.jsonl` is usually healthy.** Warm tier A is typically **tens of alerts per hour** (overnight tens of KB is normal). One live file until **256 MiB** rotate (`NOVELTY_ALERTS_MAX_BYTES`); check `ls /var/lib/ct-firehose-filter/alerts*` before assuming data loss. Tiny size alone ≠ stall — use `/status`:
 
 | Field | Healthy | Problem |
 |---|---|---|
@@ -151,7 +151,7 @@ Preferred production shape for months-long unattended runs near Colorado:
 ```text
 Public CT logs --> CertStream + filter on Oracle Always Free (Phoenix)
                               |
-                              v  EGRESS=novelty (RAM → A′ only)
+                              v  EGRESS=novelty (RAM → alerts only)
                          novelty.db + alerts.jsonl (local, budget-capped)
 ```
 
@@ -198,7 +198,7 @@ Matching still sees SANs; you just transfer less JSON per cert.
 
 ## Novelty on the Oracle VM (shoestring)
 
-High-signal trickle needs a **durable novelty DB** (first-seen coalitions) on a boot/block volume — **never `/tmp`**. WAL is enabled in [`NoveltyStore`](../src/novelty.rs). With `EGRESS=novelty`, A′ runs **in-process** in the filter binary. See [`SIGNAL.md`](SIGNAL.md#shoestring-persistence-survive-restarts).
+High-signal trickle needs a **durable novelty DB** (first-seen coalitions) on a boot/block volume — **never `/tmp`**. WAL is enabled in [`NoveltyStore`](../src/novelty.rs). With `EGRESS=novelty`, alerts run **in-process** in the filter binary. See [`SIGNAL.md`](SIGNAL.md#shoestring-persistence-survive-restarts).
 
 **Prefer Compose** (`docker-compose.prod.yml`) when Docker is available. Bare metal:
 
@@ -219,7 +219,7 @@ systemctl enable --now ct-firehose-filter.service
 
 `ExecStartPre` (or in-process guard) refuses to start when `NOVELTY_REQUIRE_DB=1` and the DB file is missing (avoids accidental empty-DB flood).
 
-**Never delete `novelty.db` casually.** After a wiped disk, **restore a local backup** (file copy or `sqlite3 … '.backup …'`) **before** starting with `NOVELTY_REQUIRE_DB=1`. Default alerts are **A′ only** (`NOVELTY_TIERS=A`); B′ stays opt-in.
+**Never delete `novelty.db` casually.** After a wiped disk, **restore a local backup** (file copy or `sqlite3 … '.backup …'`) **before** starting with `NOVELTY_REQUIRE_DB=1`. Default alerts are **tier A only** (`NOVELTY_TIERS=A`); tier B stays opt-in.
 
 ## Host sizing
 

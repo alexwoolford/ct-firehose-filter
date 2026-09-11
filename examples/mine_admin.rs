@@ -1,7 +1,7 @@
 //! Watchlist-scoped attack-surface extract from the research archive.
 //!
 //! Existence of `admin` / `grafana` / `argocd` / `oktaadmin` (etc.) hostnames on
-//! public CT — not credentials, not a scan. Do not mix into A′ investor alerts.
+//! public CT — not credentials, not a scan. Do not mix into alerts investor alerts.
 //!
 //! ```bash
 //! cargo run --release --example mine_admin -- \

@@ -140,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let NoveltyKind::A { coalition } = &alert.kind {
                 if sample_a < 12 {
                     sample_a += 1;
-                    eprintln!("A′ #{sample_a}  {}", coalition.join(" + "));
+                    eprintln!("alert #{sample_a}  {}", coalition.join(" + "));
                 }
             }
         }
@@ -172,12 +172,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("dedupe_dropped:     {dedupe_dropped}");
     println!("after_dedupe:       {after}");
     println!("fully_ignored:      {fully_ignored}");
-    println!("alerts_A_prime:     {alerts_a}");
+    println!("alerts_A:           {alerts_a}");
     println!("a_oversized_drop:   {a_oversized}");
     println!("a_mega_san_drop:    {a_mega_san}");
     println!("a_high_df_drop:     {a_high_df}");
     println!("a_calibrate_muted:  {a_calibrate}");
-    println!("alerts_B_prime:     {alerts_b}");
+    println!("alerts_B:           {alerts_b}");
     println!("alerts_total:       {alert_total}");
     println!("db_coalitions:      {db_pairs}");
     println!("db_hosts:           {db_hosts}");
