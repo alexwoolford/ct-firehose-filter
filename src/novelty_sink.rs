@@ -23,9 +23,9 @@ struct NoveltyInner {
     candidates: Option<BufWriter<std::fs::File>>,
 }
 
-/// Local durable product sink (SQLite + alerts.jsonl).
+/// Local durable product sink (SQLite mute + captured A′ + alerts.jsonl).
 /// Raw MatchEvents are not written by this sink; the optional research archive
-/// (`ARCHIVE_DIR`) is a separate writer on the enqueue path.
+/// (`ARCHIVE_DIR`) is a separate writer on the enqueue path and is not captured.
 pub struct NoveltySink {
     inner: Mutex<NoveltyInner>,
     ignore: HashSet<String>,
@@ -204,6 +204,7 @@ pub fn default_novelty_alerts() -> PathBuf {
 mod tests {
     use super::*;
     use crate::event::MatchEvent;
+    use crate::novelty::NoveltyStore;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[tokio::test]
@@ -257,6 +258,8 @@ mod tests {
         let snap = metrics.snapshot();
         assert_eq!(snap.novelty_alerts_a, 1);
         assert_eq!(snap.novelty_coalitions_inserted, 1);
+        let store = NoveltyStore::open(&db).unwrap();
+        assert_eq!(store.multi_brand_cert_count().unwrap(), 1);
         let _ = fs::remove_dir_all(&dir);
     }
 }

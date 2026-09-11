@@ -7,6 +7,7 @@ pub mod alerts_file;
 pub mod archive;
 pub mod batch;
 pub mod config;
+pub mod dates;
 pub mod egress;
 pub mod error;
 pub mod event;
@@ -36,6 +37,7 @@ pub use archive::{
 
 pub use batch::{BatchConfig, Batcher, BATCH_MAX_BYTES, BATCH_MAX_MESSAGES};
 pub use config::{Config, EgressBackend};
+pub use dates::{unix_to_instant, utc_now_instant};
 pub use egress::{EgressSink, RecordingSink, StdoutSink};
 pub use error::{
     BatchError, ConfigError, EgressError, IngressError, KeywordSourceError, ParseError,
@@ -47,7 +49,7 @@ pub use ingress::{
     CLIENT_PING_INTERVAL,
 };
 pub use metrics::{MetricsSnapshot, PipelineMetrics};
-pub use novelty::NoveltyStore;
+pub use novelty::{join_fields, NoveltyStore, DB_NAME as CT_FIREHOSE_DB_NAME, FIELD_SEP};
 pub use novelty_alert::{
     a_prime_brands, dedupe_key, effective_san_count, filter_brands, process_match, unique_keywords,
     NoveltyAlert, NoveltyCandidate, NoveltyKind, NoveltyPolicy, ProcessStats, EMPTY_SHA1_FP,

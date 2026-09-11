@@ -2,13 +2,13 @@
 
 Edge filter for the Certificate Transparency firehose (CertStream protocol). It drops unmatched CT in RAM. In production (`EGRESS=novelty`) a watchlist hit is **archived every time** — one JSONL row per **certificate** (solo or multi-brand, including renewals; not a pair table). The same hit becomes an **A′ alert** only if it is a first-seen low-df coalition after a 6h listen. Alerts go to rotated local `alerts.jsonl` (plus compact `novelty.db`). Local/dev can use `EGRESS=stdout`. Designed to run **standalone on an Oracle Always Free VM** — no cloud queues or object storage.
 
-**Mosaic tile (portfolio):** this is personal R&D — one weak signal among many. Multi-brand SANs on CT often reflect shared vendors, subsidiaries, or integration scaffolding. Alone it is **not** actionable alpha; in aggregate with other tiles it can support PE / corp-dev diligence and makes a strong **Neo4j demo** (brands as nodes, co-named certs as relationship edges). Production watchlists stay private; never commit `domains.txt` or `.env.prod`.
+**Capture:** A′ facts live in STRICT `multi_brand_certs` inside `novelty.db` (`capturable-state` v0.1.1). An optional collector drains `_outbox` from that table only. The research archive (T′) stays JSONL on the VM — do not capture ~78 matches/s. Watchlist stays the full ~752k domains. B′ is off; a later C′ (launch-shaped hosts) is not dump-all-B′. Details: [`docs/CAPTURE.md`](docs/CAPTURE.md). Production watchlists stay private; never commit `domains.txt` or `.env.prod`.
 
 **Production ingest:** run self-hosted CertStream (`0rickyy0/certstream-server-go`) beside this
 Rust filter — keep them separate ([`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)). Public Calidog
 is best-effort only. **Product go-live** = `EGRESS=novelty` (in-process A′ → local alerts)
 ([`docs/DEPLOY.md`](docs/DEPLOY.md)). Scale: [`docs/SCALE.md`](docs/SCALE.md). Ops:
-[`docs/CERTSTREAM.md`](docs/CERTSTREAM.md). Signal quality: [`docs/SIGNAL.md`](docs/SIGNAL.md).
+[`docs/CERTSTREAM.md`](docs/CERTSTREAM.md), [`docs/DAILY_OPS.md`](docs/DAILY_OPS.md). Signal quality: [`docs/SIGNAL.md`](docs/SIGNAL.md). Capture: [`docs/CAPTURE.md`](docs/CAPTURE.md).
 
 Production matching is a **Public Suffix eTLD+1 watchlist** (hundreds of thousands of registered domains), not the tiny demo [`keywords.txt`](keywords.txt). **Capture everything the watchlist hits.** Two products, one ingest:
 
@@ -50,7 +50,7 @@ watchlist match (enqueue)
 
 Details: [`docs/SIGNAL.md`](docs/SIGNAL.md) (A′/B′), [`docs/ARCHIVE.md`](docs/ARCHIVE.md) (research archive).
 
-This repo is **not** a full entity-resolution product (no SEC CIK/LEI mapping, no pDNS wildcard piercing, no FIX / warehouse feeds). Off-box streaming of alerts is **out of scope for now**.
+This repo is **not** a full entity-resolution product (no SEC CIK/LEI mapping, no pDNS wildcard piercing). Off-box streaming of alerts is the collector `_outbox` path, not a second HTTP API.
 
 ## Matching rule
 
@@ -154,7 +154,7 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | crt.sh-style monitors | Exponential reconnect + jitter; size/time batching; bounded backpressure; lag counters |
 | Hardened Rust services | CI/fmt/clippy/deny; typed `Config::validate()`; atomic progress logs; graceful drain; release LTO |
 
-**Not** in scope: Postgres CT warehouse, direct log polling, GeoIP/WHOIS/HTML scrape stacks, off-box alert streaming.
+**Not** in scope: a CT / PEM warehouse in this crate, direct log polling, GeoIP/WHOIS/HTML scrape stacks, capturing `brand_degree` or the research archive.
 
 ## Layout
 
@@ -166,8 +166,10 @@ On Ctrl-C the process cancels ingress, closes the match channel, and the batcher
 | `docs/CERTSTREAM.md` | sidecar + compose + egress runbook |
 | `docs/SIGNAL.md` | 15m tip eval + SNR / novelty alert semantics |
 | `docs/ARCHIVE.md` | research MatchEvent archive for multi-year replay |
+| `docs/CAPTURE.md` | capture A′ only; archive / degree off the bus |
+| `docs/DAILY_OPS.md` | Compose/systemd restart, collector mounts |
 | `src/archive.rs` | append-only matches.jsonl + config snapshots |
-| `src/novelty.rs` | SQLite first-seen coalitions / hosts |
+| `src/novelty.rs` | mute SQLite + STRICT `multi_brand_certs` + announce |
 | `src/novelty_alert.rs` | shared A′/B′ processing |
 | `src/novelty_sink.rs` | in-process A′ egress (`EGRESS=novelty`) |
 | `src/status.rs` | `/healthz` + `/status` JSON (loopback scrape) |

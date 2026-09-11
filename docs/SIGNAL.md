@@ -28,11 +28,12 @@ watchlist match (enqueue)
 
 ## Intent (mosaic tile)
 
-1. Watch hundreds of thousands of company domains on live CT (not toy keywords).
+1. Watch hundreds of thousands of company domains on live CT (not toy keywords). **Keep the ~752k watchlist** — matching is free; do not shrink it here.
 2. Emit when a SAN is under a watchlist brand (**exact eTLD+1**), without drowning in mega-apex self-noise.
 3. Treat the trickle as a **weak diligence signal** — staging / SSO / VPN / integration scaffolding that can reveal **hidden or latent commercial relationships** — **not** proof of deals and **not** standalone actionable alpha.
+4. **Capture A′ only** (`multi_brand_certs`). T′ stays the JSONL archive. Do not enable B′; product-launch coverage would be a later rate-limited C′, not dump-all-hosts.
 
-CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev research and Neo4j relationship demos; dangerous if oversold as a trading feed.
+CT co-occurrence is one tile in a larger mosaic: useful for PE / corp-dev research and Neo4j relationship demos; dangerous if oversold as a trading feed. Contract: [`CAPTURE.md`](CAPTURE.md).
 
 ## What A′ actually is (streams honesty)
 

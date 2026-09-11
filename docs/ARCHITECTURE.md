@@ -47,6 +47,8 @@ is out of scope.
 
 - Direct CT log polling
 - Patching or forking certstream-server-go for business matching
-- CT warehouse / Postgres
+- CT / PEM warehouse or capturing the research archive
+- Capturing `brand_degree` (derived; mega-apex would flood `_outbox`)
 - Fuzzy / hyphen brand matching inside SAN labels
 - Curating the shared multi-tool domain list
+- Enabling B′ / first-seen hosts as a captured category

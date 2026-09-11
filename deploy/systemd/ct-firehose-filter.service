@@ -15,10 +15,15 @@ EnvironmentFile=-/etc/ct-firehose-filter/env
 Environment=CERTSTREAM_URL=ws://127.0.0.1:8080/
 Environment=EGRESS=novelty
 Environment=RUST_LOG=warn
+SyslogIdentifier=ct-firehose-filter
 ExecStart=/usr/local/bin/ct-firehose-filter
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/ct-firehose-filter -/var/lib/state-capture/announce -/run/state
 
 [Install]
 WantedBy=multi-user.target

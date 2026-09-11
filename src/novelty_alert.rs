@@ -242,7 +242,15 @@ pub fn process_match(
 
     if brands.len() >= 2 {
         let key = brands.join("\u{1f}");
-        let is_new = store.insert_coalition(&key, ts)?;
+        let want_emit = policy.want_a
+            && brands.len() <= policy.max_coalition_len
+            && (policy.max_san_count == 0 || effective_san_count(ev) <= policy.max_san_count)
+            && !policy.calibrating;
+        let is_new = if want_emit {
+            store.insert_multi_brand_cert(&brands, ev, ts)?
+        } else {
+            store.insert_coalition(&key, ts)?
+        };
         if is_new {
             stats.coalitions_inserted = 1;
         }
@@ -514,6 +522,7 @@ mod tests {
         let (a1, s1) = process_match(&store, &ignore, &policy, &ev).unwrap();
         assert_eq!(s1.alerts_a, 1);
         assert_eq!(a1.len(), 1);
+        assert_eq!(store.multi_brand_cert_count().unwrap(), 1);
         let (a2, s2) = process_match(&store, &ignore, &policy, &ev).unwrap();
         assert_eq!(s2.alerts_a, 0);
         assert!(a2.is_empty());
@@ -539,6 +548,7 @@ mod tests {
         assert_eq!(s.a_oversized_dropped, 1);
         assert_eq!(s.alerts_a, 0);
         assert_eq!(store.counts().unwrap().0, 1);
+        assert_eq!(store.multi_brand_cert_count().unwrap(), 0);
     }
 
     #[test]
@@ -569,6 +579,7 @@ mod tests {
         assert_eq!(s.alerts_a, 0);
         assert_eq!(s.a_oversized_dropped, 0);
         assert_eq!(store.counts().unwrap().0, 1);
+        assert_eq!(store.multi_brand_cert_count().unwrap(), 0);
 
         // Same brands, small SAN list → emit.
         let store2 = NoveltyStore::open(":memory:").unwrap();

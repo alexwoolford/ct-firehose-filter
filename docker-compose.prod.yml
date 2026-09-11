@@ -49,6 +49,11 @@ services:
       NOVELTY_CALIBRATE_EVENTS: ${NOVELTY_CALIBRATE_EVENTS:-0}
       # Optional learning feed (first-seen coalitions with degrees). Empty = off.
       NOVELTY_CANDIDATES: ${NOVELTY_CANDIDATES:-}
+      # Collector announce/nudge (defaults match capturable-state). Host paths
+      # must be bind-mounted below so announce JSON points at the same sqlite
+      # the collector opens.
+      STATE_CAPTURE_ANNOUNCE_DIR: /var/lib/state-capture/announce
+      STATE_CAPTURE_SOCK: /run/state/collect.sock
       # Chunk + total budget (multi-year headroom on ~200GB boot volume).
       NOVELTY_ALERTS_MAX_BYTES: ${NOVELTY_ALERTS_MAX_BYTES:-268435456}
       NOVELTY_ALERTS_MAX_TOTAL_BYTES: ${NOVELTY_ALERTS_MAX_TOTAL_BYTES:-21474836480}
@@ -61,3 +66,7 @@ services:
       GIT_SHA: ${GIT_SHA:-}
     volumes:
       - /var/lib/ct-firehose-filter:/var/lib/ct-firehose-filter
+      # Collector host inventory (announce JSON + datagram nudge). Mount the
+      # directory, not the sock file — Docker turns a missing sock into a dir.
+      - /var/lib/state-capture/announce:/var/lib/state-capture/announce
+      - /run/state:/run/state

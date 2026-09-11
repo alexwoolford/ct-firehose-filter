@@ -38,7 +38,7 @@ Matched batches go through `EgressSink`. The binary selects a backend with `EGRE
 | `stdout` (default) | JSONL match events on stdout | nothing |
 | `novelty` | in-process A′ → `novelty.db` + rotated `alerts.jsonl` | `NOVELTY_DB` / `NOVELTY_ALERTS` (defaults under `/var/lib/...`) |
 
-Production path is **`EGRESS=novelty`** on Oracle Always Free. Off-box streaming of A′ alerts is out of scope for now.
+Production path is **`EGRESS=novelty`** on Oracle Always Free. Mosaic capture is `multi_brand_certs` in `novelty.db` ([`CAPTURE.md`](CAPTURE.md)).
 
 ## Compose-first local path
 
@@ -193,7 +193,7 @@ Matching still sees SANs; you just transfer less JSON per cert.
 | Research archive | `ARCHIVE_DIR` matches.jsonl (+ gzip); prune oldest sealed at 50 GiB — off-box copy if you need older history |
 | Disk | `EGRESS=novelty`, `RUST_LOG=warn`, Docker log rotation; archive capped at `ARCHIVE_MAX_TOTAL_BYTES` |
 | RAM | ~0.1 GB watchlist (measured) + ~0.5–2 GB CertStream; Oracle 12 GB OK |
-| Dependencies | crates.io only (`deny.toml`); CI runs `cargo deny` + `cargo audit` |
+| Dependencies | crates.io + pinned `capturable-state` git tag (`deny.toml`); CI runs `cargo deny` + `cargo audit` |
 | Watchlist drift | Optional `WATCHLIST_RELOAD_SECS` |
 
 ## Novelty on the Oracle VM (shoestring)

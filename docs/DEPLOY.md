@@ -12,7 +12,7 @@ Runtime ranking: **Compose (default) → systemd (advanced / no Docker) → not 
 | **Product feed (internal)** | Analyst trickle | Continuous **A′ novelty** with `NOVELTY_MAX_COALITION=5` → `alerts.jsonl` |
 | **Decision-grade diligence** | PE / corp-dev research | Warm DB + labeled precision + **known-ownership surprise filter** + case studies — see [`SIGNAL.md`](SIGNAL.md#why-this-signal-matters-pe--corp-dev-diligence) |
 
-Product output stays on the VM (`novelty.db` + `alerts.jsonl`). Off-box streaming of A′ alerts is out of scope for now.
+Product output stays on the VM (`novelty.db` `multi_brand_certs` + `alerts.jsonl`). Collector drain is `_outbox` from that sqlite (see [`CAPTURE.md`](CAPTURE.md)). The JSONL archive is not shipped off-box via the collector.
 
 ## Pass / fail gates
 
