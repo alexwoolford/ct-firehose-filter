@@ -94,6 +94,12 @@ Prefer Compose when Docker is available ([`DEPLOY.md`](DEPLOY.md)). Sample units
 
 - `certstream-server-go.service` — CT fan-in (install/seed CertStream yourself)
 - `ct-firehose-filter.service` — edge filter (`After=` / `Requires=` the sidecar)
+- `ct-novelty-replay.service` — optional offline oneshot over MatchEvent JSONL. Cargo has no `[[bin]]` named `ct-novelty-replay`; build the example and copy it:
+
+```bash
+cargo build --release --example novelty_replay
+install -m 755 target/release/examples/novelty_replay /usr/local/bin/ct-novelty-replay
+```
 
 Set `EGRESS=novelty` and `RUST_LOG=warn` in the env file for production
 ([`deploy/systemd/ct-firehose-filter.env.example`](../deploy/systemd/ct-firehose-filter.env.example)).
@@ -206,7 +212,10 @@ High-signal trickle needs a **durable novelty DB** (first-seen coalitions) on a 
 cargo build --release
 install -m 755 target/release/ct-firehose-filter /usr/local/bin/
 install -m 644 deploy/systemd/ct-firehose-filter.service /etc/systemd/system/
-install -m 644 deploy/systemd/ct-firehose-filter.env.example /etc/ct-firehose-filter/env
+# Do not overwrite an existing env.
+if [[ ! -f /etc/ct-firehose-filter/env ]]; then
+  install -m 600 deploy/systemd/ct-firehose-filter.env.example /etc/ct-firehose-filter/env
+fi
 # edit env: EGRESS=novelty, WATCHLIST_FILE, NOVELTY_DB, NOVELTY_REQUIRE_DB, NOVELTY_TIERS=A
 
 mkdir -p /var/lib/ct-firehose-filter
@@ -217,7 +226,7 @@ systemctl daemon-reload
 systemctl enable --now ct-firehose-filter.service
 ```
 
-`ExecStartPre` (or in-process guard) refuses to start when `NOVELTY_REQUIRE_DB=1` and the DB file is missing (avoids accidental empty-DB flood).
+The daemon unit has **no** `ExecStartPre`. `NoveltySink` refuses to start when `NOVELTY_REQUIRE_DB=1` and the DB file is missing (avoids accidental empty-DB flood). The optional `ct-novelty-replay.service` oneshot is the unit with `ExecStartPre` (same env flag).
 
 **Never delete `novelty.db` casually.** After a wiped disk, **restore a local backup** (file copy or `sqlite3 … '.backup …'`) **before** starting with `NOVELTY_REQUIRE_DB=1`. Default alerts are **tier A only** (`NOVELTY_TIERS=A`); tier B stays opt-in.
 

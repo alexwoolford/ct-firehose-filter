@@ -154,27 +154,27 @@ impl NoveltyStore {
             CREATE TABLE IF NOT EXISTS coalitions (
                 key TEXT PRIMARY KEY NOT NULL,
                 first_seen INTEGER NOT NULL
-            );
+            ) STRICT;
             CREATE TABLE IF NOT EXISTS hosts (
                 brand TEXT NOT NULL,
                 host TEXT NOT NULL,
                 first_seen INTEGER NOT NULL,
                 PRIMARY KEY (brand, host)
-            );
+            ) STRICT;
             CREATE TABLE IF NOT EXISTS brand_degree (
                 brand TEXT PRIMARY KEY NOT NULL,
                 events INTEGER NOT NULL DEFAULT 0,
                 partners INTEGER NOT NULL DEFAULT 0
-            );
+            ) STRICT;
             CREATE TABLE IF NOT EXISTS brand_partners (
                 brand TEXT NOT NULL,
                 partner TEXT NOT NULL,
                 PRIMARY KEY (brand, partner)
-            );
+            ) STRICT;
             CREATE TABLE IF NOT EXISTS meta (
                 key TEXT PRIMARY KEY NOT NULL,
                 value TEXT NOT NULL
-            );
+            ) STRICT;
             ",
         )
         .context("novelty mute schema")?;
@@ -497,6 +497,32 @@ mod tests {
         store.checkpoint().unwrap();
     }
 
+    fn assert_strict(conn: &Connection, name: &str) {
+        let strict: i64 = conn
+            .query_row(
+                "SELECT strict FROM pragma_table_list WHERE name = ?1",
+                params![name],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(strict, 1, "{name} must be STRICT");
+    }
+
+    #[test]
+    fn fresh_mute_tables_are_strict() {
+        let store = NoveltyStore::open(":memory:").unwrap();
+        for name in [
+            "coalitions",
+            "hosts",
+            "brand_degree",
+            "brand_partners",
+            "meta",
+            "multi_brand_certs",
+        ] {
+            assert_strict(&store.conn, name);
+        }
+    }
+
     #[test]
     fn cooccurrence_raises_partner_degree() {
         let store = NoveltyStore::open(":memory:").unwrap();
@@ -632,6 +658,69 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM _outbox", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n2, 1, "renewal must not emit another outbox row");
+    }
+
+    #[test]
+    fn mute_and_degree_writes_do_not_emit_outbox() {
+        let _g = ANNOUNCE_ENV.lock().expect("env lock");
+        let dir = tempfile::tempdir().unwrap();
+        let announce = dir.path().join("announce");
+        std::fs::create_dir_all(&announce).unwrap();
+        std::env::set_var("STATE_CAPTURE_ANNOUNCE_DIR", &announce);
+        let db = dir.path().join("novelty.db");
+        let store = NoveltyStore::open(&db).unwrap();
+        for name in [
+            "coalitions",
+            "hosts",
+            "brand_degree",
+            "brand_partners",
+            "meta",
+            "multi_brand_certs",
+        ] {
+            assert_strict(&store.conn, name);
+        }
+
+        store
+            .record_appearances(&["a.com".into(), "b.com".into()])
+            .unwrap();
+        store
+            .record_cooccurrence(&["a.com".into(), "b.com".into()])
+            .unwrap();
+        assert!(store.insert_coalition("x.com\u{1f}y.com", 1).unwrap());
+        assert!(store.insert_host("a.com", "www.a.com", 1).unwrap());
+        let n: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM _outbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "mute/degree tables must not be in the capture set");
+
+        let ev = MatchEvent::new(
+            vec!["sso.c.com".into(), "vpn.d.com".into()],
+            vec!["c.com".into(), "d.com".into()],
+            Some(1.0),
+            Some("test".into()),
+            Some("fp".into()),
+        );
+        let brands = vec!["c.com".into(), "d.com".into()];
+        assert!(store.insert_multi_brand_cert(&brands, &ev, 1).unwrap());
+        let n_facts: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM _outbox WHERE tbl = 'multi_brand_certs' AND op = 'I'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_facts, 1);
+        let n_other: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM _outbox WHERE tbl != 'multi_brand_certs'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n_other, 0);
     }
 
     #[test]
