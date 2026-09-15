@@ -14,6 +14,12 @@ EnvironmentFile=-/etc/ct-firehose-filter/novelty.env
 ExecStartPre=/bin/bash -c 'if [[ "${NOVELTY_REQUIRE_DB:-0}" == "1" ]]; then test -f "$NOVELTY_DB"; fi'
 ExecStart=/usr/local/bin/ct-novelty-replay ${NOVELTY_INPUT}
 Nice=10
+SyslogIdentifier=ct-novelty-replay
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/ct-firehose-filter -/var/lib/state-capture/announce -/run/state
 
 [Install]
 WantedBy=multi-user.target
